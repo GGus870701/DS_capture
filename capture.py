@@ -388,7 +388,11 @@ class ImageEditor(tk.Toplevel):
         iw, ih = self.edit_img.size
         dw = max(1, int(iw * self.scale))
         dh = max(1, int(ih * self.scale))
-        disp = self.edit_img.convert("RGB").resize((dw, dh), Image.LANCZOS)
+        try:
+            r_filter = Image.Resampling.BILINEAR
+        except AttributeError:
+            r_filter = Image.BILINEAR
+        disp = self.edit_img.convert("RGB").resize((dw, dh), r_filter)
         self._tk_img = ImageTk.PhotoImage(disp)
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor="nw", image=self._tk_img)
@@ -408,7 +412,13 @@ class ImageEditor(tk.Toplevel):
         self.bind("<Control-Z>",               lambda e: self.undo())
         self.bind("<Control-y>",               lambda e: self.redo())
         self.bind("<Control-Y>",               lambda e: self.redo())
-        self.bind("<Configure>",               lambda e: self.after(10, self._fit_and_refresh))
+        self.bind("<Configure>",               self._on_configure)
+
+    def _on_configure(self, event):
+        if event.widget == self:
+            if hasattr(self, '_cfg_job') and self._cfg_job is not None:
+                self.after_cancel(self._cfg_job)
+            self._cfg_job = self.after(50, self._fit_and_refresh)
 
     def _on_press(self, event):
         self._sx, self._sy = event.x, event.y
@@ -788,23 +798,23 @@ class MainApp:
         
         tk.Label(btn_con, text="저장 파일 형식", bg="#1e272e", fg="#a4b0be", font=("Malgun Gothic", 9, "bold")).pack(pady=(15, 0), anchor="w")
         fmt_f = tk.Frame(btn_con, bg="#1e272e"); fmt_f.pack(fill=tk.X, pady=(5, 0))
-        self.btn_png = tk.Button(fmt_f, text="PNG", command=lambda: self.set_format("png"), bg="#00d2d3", fg="white", font=("Arial", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
+        self.btn_png = tk.Button(fmt_f, text="PNG", command=lambda: self.set_format("png"), bg="#00d2d3", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_png.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        self.btn_jpg = tk.Button(fmt_f, text="JPG", command=lambda: self.set_format("jpg"), bg="#4b6584", fg="white", font=("Arial", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
+        self.btn_jpg = tk.Button(fmt_f, text="JPG", command=lambda: self.set_format("jpg"), bg="#4b6584", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_jpg.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
         tk.Label(btn_con, text="닫기 버튼 동작", bg="#1e272e", fg="#a4b0be", font=("Malgun Gothic", 9, "bold")).pack(pady=(15, 0), anchor="w")
         close_f = tk.Frame(btn_con, bg="#1e272e"); close_f.pack(fill=tk.X, pady=(5, 0))
-        self.btn_close_tray = tk.Button(close_f, text="트레이로", command=lambda: self.set_close_action("tray"), bg="#00d2d3", fg="white", font=("Arial", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
+        self.btn_close_tray = tk.Button(close_f, text="트레이로", command=lambda: self.set_close_action("tray"), bg="#00d2d3", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_close_tray.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        self.btn_close_exit = tk.Button(close_f, text="완전 종료", command=lambda: self.set_close_action("exit"), bg="#4b6584", fg="white", font=("Arial", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
+        self.btn_close_exit = tk.Button(close_f, text="완전 종료", command=lambda: self.set_close_action("exit"), bg="#4b6584", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_close_exit.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
         tk.Label(btn_con, text="윈도우 시작 시 자동실행", bg="#1e272e", fg="#a4b0be", font=("Malgun Gothic", 9, "bold")).pack(pady=(15, 0), anchor="w")
         startup_f = tk.Frame(btn_con, bg="#1e272e"); startup_f.pack(fill=tk.X, pady=(5, 0))
-        self.btn_startup_on = tk.Button(startup_f, text="자동실행 켬", command=lambda: self.set_startup(True), bg="#4b6584", fg="white", font=("Arial", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
+        self.btn_startup_on = tk.Button(startup_f, text="자동실행 켬", command=lambda: self.set_startup(True), bg="#4b6584", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_startup_on.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        self.btn_startup_off = tk.Button(startup_f, text="자동실행 끔", command=lambda: self.set_startup(False), bg="#00d2d3", fg="white", font=("Arial", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
+        self.btn_startup_off = tk.Button(startup_f, text="자동실행 끔", command=lambda: self.set_startup(False), bg="#00d2d3", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_startup_off.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
         self.update_format_buttons()
