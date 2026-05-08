@@ -686,7 +686,7 @@ class ImageEditor(tk.Toplevel):
 class MainApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("DS Capture v1.01")
+        self.root.title("DS Capture v1.03")
         try: self.root.iconbitmap(get_resource_path("icon.ico"))
         except Exception: pass
         

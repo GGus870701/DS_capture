@@ -33,9 +33,10 @@ def main():
     # 3. PyInstaller로 패키징 실행
     print(f"[{new_title}] 패키징을 시작합니다...")
     
+    import sys
     # 가상환경 또는 시스템의 pyinstaller 명령어
     cmd = [
-        "pyinstaller", 
+        sys.executable, "-m", "PyInstaller",
         "--noconfirm", 
         "--clean", 
         "--onefile", 
@@ -50,10 +51,10 @@ def main():
     result = subprocess.run(cmd)
     
     if result.returncode == 0:
-        print("\n✅ 패키징이 성공적으로 완료되었습니다!")
+        print("\n[SUCCESS] 패키징이 성공적으로 완료되었습니다!")
         print(f"결과물: dist/DS Capture.exe (내부 표기버전: {new_title})")
     else:
-        print("\n❌ 패키징 중 오류가 발생했습니다.")
+        print("\n[ERROR] 패키징 중 오류가 발생했습니다.")
 
 if __name__ == "__main__":
     main()
