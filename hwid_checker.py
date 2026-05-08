@@ -1,6 +1,25 @@
 import tkinter as tk
 from tkinter import messagebox
-from security_utils import get_hwid
+import subprocess
+import hashlib
+
+def get_hwid():
+    """기기 고유 정보를 조합하여 해싱된 HWID 생성"""
+    try:
+        # 1. 메인보드 시리얼 추출
+        cmd_mb = "wmic baseboard get serialnumber"
+        mb_serial = subprocess.check_output(cmd_mb, shell=True).decode().split('\n')[1].strip()
+        
+        # 2. 디스크 시리얼 추출
+        cmd_disk = "wmic diskdrive get serialnumber"
+        disk_serial = subprocess.check_output(cmd_disk, shell=True).decode().split('\n')[1].strip()
+        
+        # 정보 조합 및 해싱
+        raw_id = f"DS_{mb_serial}_{disk_serial}"
+        hash_id = hashlib.sha256(raw_id.encode()).hexdigest().upper()
+        return f"{hash_id[:4]}-{hash_id[4:8]}-{hash_id[8:12]}"
+    except Exception as e:
+        return f"ERROR-{hash(str(e)) % 10000}"
 
 class HWIDChecker:
     def __init__(self):

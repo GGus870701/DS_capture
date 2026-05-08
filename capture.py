@@ -11,12 +11,10 @@ import json
 import math
 import keyboard  # pip install keyboard
 import pystray   # pip install pystray
-import threading
-import sys
 import winreg
-from security_utils import get_hwid
 import hmac
 import hashlib
+import subprocess
 
 # DPI 인식 설정
 try:
@@ -63,6 +61,24 @@ def get_resource_path(relative_path):
     else:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+def get_hwid():
+    """기기 고유 정보를 조합하여 해싱된 HWID 생성"""
+    try:
+        # 1. 메인보드 시리얼 추출
+        cmd_mb = "wmic baseboard get serialnumber"
+        mb_serial = subprocess.check_output(cmd_mb, shell=True).decode().split('\n')[1].strip()
+        
+        # 2. 디스크 시리얼 추출
+        cmd_disk = "wmic diskdrive get serialnumber"
+        disk_serial = subprocess.check_output(cmd_disk, shell=True).decode().split('\n')[1].strip()
+        
+        # 정보 조합 및 해싱
+        raw_id = f"DS_{mb_serial}_{disk_serial}"
+        hash_id = hashlib.sha256(raw_id.encode()).hexdigest().upper()
+        return f"{hash_id[:4]}-{hash_id[4:8]}-{hash_id[8:12]}"
+    except Exception as e:
+        return f"ERROR-{hash(str(e)) % 10000}"
 
 # --- [보안 및 라이센스 설정] ---
 SECRET_KEY = "DS_CAPTURE_SECRET_KEY_2026_@!" 
