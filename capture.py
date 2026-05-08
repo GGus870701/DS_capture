@@ -1,14 +1,11 @@
 import tkinter as tk
-from tkinter import filedialog, ttk, colorchooser, simpledialog
-import tkinter.font as tkfont
+from tkinter import filedialog, simpledialog
 from PIL import ImageGrab, Image, ImageDraw, ImageTk, ImageOps, ImageFilter, ImageFont, ImageEnhance
 import time
 import os
 import ctypes
 from ctypes import wintypes
-import io
 import json
-import math
 import keyboard  # pip install keyboard
 import pystray   # pip install pystray
 import threading
