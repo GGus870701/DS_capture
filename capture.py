@@ -53,6 +53,15 @@ else:
 
 CONFIG_FILE = os.path.join(BASE_DIR, "settings.json")
 
+def get_resource_path(relative_path):
+    """ PyInstaller 호환 리소스 경로 반환 """
+    if getattr(sys, 'frozen', False):
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+
 class ResizableBox(tk.Toplevel):
     def __init__(self, parent, width, height, on_capture):
         super().__init__(parent)
@@ -218,6 +227,8 @@ class ImageEditor(tk.Toplevel):
         self.attributes("-topmost", True)
         self.resizable(True, True)
         self.title(f"편집기 — {os.path.basename(filepath)}")
+        try: self.iconbitmap(get_resource_path("icon.ico"))
+        except Exception: pass
 
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         target_w = int(sw * 0.75)
@@ -676,6 +687,8 @@ class MainApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("DS Capture v1.01")
+        try: self.root.iconbitmap(get_resource_path("icon.ico"))
+        except Exception: pass
         
         try:
             dpi = self.root.winfo_fpixels('1i')
@@ -783,6 +796,8 @@ class MainApp:
         pop = tk.Toplevel(self.root)
         self.settings_win = pop
         pop.title("환경설정 (Settings)")
+        try: pop.iconbitmap(get_resource_path("icon.ico"))
+        except Exception: pass
         pop.geometry(f"{int(400 * self.scale_factor)}x{int(580 * self.scale_factor)}")
         pop.attributes("-topmost", True)
         pop.config(bg="#1e272e")
