@@ -11,6 +11,8 @@ import json
 import math
 import keyboard  # pip install keyboard
 import pystray   # pip install pystray
+import threading
+import sys
 import winreg
 import hmac
 import hashlib

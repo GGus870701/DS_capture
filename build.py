@@ -4,9 +4,9 @@ import subprocess
 import sys
 
 def main():
-    py_file = 'capture.py'
+    py_file = 'DS Capture.py'
     
-    # 1. capture.py 에서 현재 버전 찾기
+    # 1. DS Capture.py 에서 현재 버전 찾기
     with open(py_file, 'r', encoding='utf-8') as f:
         content = f.read()
 
@@ -20,7 +20,7 @@ def main():
     new_minor = current_minor + 1
     new_version_str = f"1.{new_minor:02d}"
     
-    # 2. capture.py 의 윈도우 타이틀 버전 업데이트
+    # 2. DS Capture.py 의 윈도우 타이틀 버전 업데이트
     old_title = f'DS Capture v1.{current_minor:02d}'
     new_title = f'DS Capture v{new_version_str}'
     new_content = content.replace(old_title, new_title)
@@ -44,7 +44,7 @@ def main():
         "--assume-yes-for-downloads",
         "--output-dir=dist_production",
         "--output-filename=DS Capture.exe",
-        "capture.py"
+        py_file
     ]
     
     # 명령어 실행
