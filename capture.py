@@ -1278,5 +1278,16 @@ class MainApp:
                 try: shutil.copy2(fp, os.path.join(d, os.path.basename(fp)))
                 except Exception: pass
 
+def enforce_single_instance():
+    mutex_name = "Global\\DSCapture_Unique_Instance_Mutex"
+    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
+    if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
+        return False, None
+    return True, mutex
+
 if __name__ == "__main__":
+    is_unique, mutex = enforce_single_instance()
+    if not is_unique:
+        sys.exit(0)
+        
     MainApp().root.mainloop()
