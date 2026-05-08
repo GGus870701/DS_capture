@@ -1,16 +1,22 @@
 import tkinter as tk
-from tkinter import filedialog, simpledialog
+from tkinter import filedialog, ttk, colorchooser, simpledialog
+import tkinter.font as tkfont
 from PIL import ImageGrab, Image, ImageDraw, ImageTk, ImageOps, ImageFilter, ImageFont, ImageEnhance
 import time
 import os
 import ctypes
 from ctypes import wintypes
+import io
 import json
+import math
 import keyboard  # pip install keyboard
 import pystray   # pip install pystray
 import threading
 import sys
 import winreg
+from security_utils import get_hwid
+import hmac
+import hashlib
 
 # DPI 인식 설정
 try:
@@ -57,6 +63,91 @@ def get_resource_path(relative_path):
     else:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+# --- [보안 및 라이센스 설정] ---
+SECRET_KEY = "DS_CAPTURE_SECRET_KEY_2026_@!" 
+LICENSE_FILE = os.path.join(BASE_DIR, "license.lic")
+
+def check_license(app_name):
+    """라이센스 유효성 검사"""
+    hwid = get_hwid()
+    
+    if not os.path.exists(LICENSE_FILE):
+        show_license_error(hwid, "라이센스 파일(license.lic)이 없습니다.")
+        return False
+
+    try:
+        with open(LICENSE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # 1. 서명 검증
+        msg = f"{data['hwid']}{data['app_name']}{data['expiry_date']}"
+        expected_sign = hmac.new(SECRET_KEY.encode(), msg.encode(), hashlib.sha256).hexdigest()
+        
+        if data['signature'] != expected_sign:
+            show_license_error(hwid, "라이센스 서명이 올바르지 않습니다. (변조됨)")
+            return False
+            
+        # 2. 프로그램 이름 일치 여부
+        if data['app_name'] != app_name:
+            show_license_error(hwid, f"해당 라이센스는 {data['app_name']}용입니다.")
+            return False
+            
+        # 3. HWID 일치 여부
+        if data['hwid'] != hwid:
+            show_license_error(hwid, "등록된 기기와 현재 기기의 ID가 일치하지 않습니다.")
+            return False
+            
+        # 4. 만료 날짜 확인
+        from datetime import datetime
+        if data['expiry_date'] != "PERMANENT":
+            expiry = datetime.strptime(data['expiry_date'], "%Y-%m-%d")
+            if datetime.now() > expiry:
+                show_license_error(hwid, f"라이센스가 만료되었습니다. (만료일: {data['expiry_date']})")
+                return False
+                
+        return True
+        
+    except Exception as e:
+        show_license_error(hwid, f"라이센스 파일을 읽는 중 오류가 발생했습니다: {e}")
+        return False
+
+def show_license_error(hwid, message):
+    """라이센스 오류 팝업창"""
+    root = tk.Tk()
+    root.withdraw()
+    
+    err_win = tk.Toplevel(root)
+    err_win.title("라이센스 인증 필요")
+    
+    win_w, win_h = 450, 270
+    sw, sh = err_win.winfo_screenwidth(), err_win.winfo_screenheight()
+    err_win.geometry(f"{win_w}x{win_h}+{(sw-win_w)//2}+{(sh-win_h)//2}")
+    err_win.config(bg="#1e272e")
+    err_win.attributes("-topmost", True)
+    
+    tk.Label(err_win, text="라이센스 인증이 필요합니다.", bg="#1e272e", fg="#ff4757", 
+             font=("Malgun Gothic", 12, "bold")).pack(pady=(25, 10))
+    tk.Label(err_win, text=message, bg="#1e272e", fg="white", font=("Malgun Gothic", 9)).pack()
+    
+    tk.Label(err_win, text=f"기기 고유 ID: {hwid}", bg="#1e272e", fg="#00d2d3", 
+             font=("Consolas", 11, "bold")).pack(pady=15)
+             
+    def copy_id():
+        err_win.clipboard_clear()
+        err_win.clipboard_append(hwid)
+        from tkinter import messagebox
+        messagebox.showinfo("복사 완료", "기기 ID가 복사되었습니다.\n관리자에게 전달하여 라이센스를 발급받으세요.")
+        
+    tk.Button(err_win, text="기기 ID 복사하기", command=copy_id, bg="#4b6584", fg="white", 
+              font=("Malgun Gothic", 9, "bold"), padx=20, pady=5, bd=0, cursor="hand2").pack(pady=5)
+              
+    tk.Label(err_win, text="관리자에게 문의하세요.", bg="#1e272e", fg="#a4b0be", 
+             font=("Malgun Gothic", 9)).pack(side=tk.BOTTOM, pady=10)
+             
+    err_win.protocol("WM_DELETE_WINDOW", lambda: sys.exit(0))
+    root.mainloop()
+# -------------------------------------------
 
 
 class ResizableBox(tk.Toplevel):
@@ -1287,4 +1378,6 @@ if __name__ == "__main__":
     if not is_unique:
         sys.exit(0)
         
-    MainApp().root.mainloop()
+    # 라이센스 체크 (프로그램명: DS_CAPTURE)
+    if check_license("DS_CAPTURE"):
+        MainApp().root.mainloop()

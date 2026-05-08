@@ -3,10 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# PyInstaller
+# PyInstaller & Nuitka
 build/
 dist/
+dist_*/
 *.spec
+*.build/
+*.onefile-build/
 
 # Settings and Logs
 settings.json
