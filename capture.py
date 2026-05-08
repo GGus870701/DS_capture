@@ -798,7 +798,7 @@ class MainApp:
         pop.title("환경설정 (Settings)")
         try: pop.iconbitmap(get_resource_path("icon.ico"))
         except Exception: pass
-        pop.geometry(f"{int(400 * self.scale_factor)}x{int(580 * self.scale_factor)}")
+        pop.geometry(f"{int(400 * self.scale_factor)}x{int(480 * self.scale_factor)}")
         pop.attributes("-topmost", True)
         pop.config(bg="#1e272e")
         
