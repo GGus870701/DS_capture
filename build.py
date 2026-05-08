@@ -42,7 +42,7 @@ def main():
         "--windowed", 
         "--icon=icon.ico", 
         "--add-data", "icon.ico;.", 
-        "--name", new_title, 
+        "--name", "DS Capture", 
         "capture.py"
     ]
     
@@ -51,7 +51,7 @@ def main():
     
     if result.returncode == 0:
         print("\n✅ 패키징이 성공적으로 완료되었습니다!")
-        print(f"결과물: dist/{new_title}.exe")
+        print(f"결과물: dist/DS Capture.exe (내부 표기버전: {new_title})")
     else:
         print("\n❌ 패키징 중 오류가 발생했습니다.")
 
