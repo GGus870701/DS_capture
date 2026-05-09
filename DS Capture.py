@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import filedialog, ttk, colorchooser, simpledialog
-import tkinter.font as tkfont
-from PIL import ImageGrab, Image, ImageDraw, ImageTk, ImageOps, ImageFilter, ImageFont, ImageEnhance
+from PIL import ImageGrab, Image, ImageDraw, ImageTk, ImageOps, ImageFont, ImageEnhance
 import time
 import os
 import ctypes
@@ -18,6 +17,13 @@ import hmac
 import hashlib
 import subprocess
 
+# --- [시작 프로그램 실행 경로 문제 해결] ---
+# 실행 파일 경로로 작업 디렉토리 변경 (license.lic 파일을 찾지 못하는 문제 방지)
+if getattr(sys, 'frozen', False):
+    os.chdir(os.path.dirname(sys.executable))
+else:
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 # DPI 인식 설정
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
@@ -27,7 +33,6 @@ except Exception:
 # --- [64비트 호환성 유지] Windows API 정의 ---
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
-msvcrt = ctypes.cdll.msvcrt
 
 user32.OpenClipboard.argtypes = [ctypes.c_void_p]
 user32.OpenClipboard.restype = wintypes.BOOL
@@ -44,20 +49,43 @@ kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
 kernel32.GlobalLock.restype = ctypes.c_void_p
 kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
 kernel32.GlobalUnlock.restype = wintypes.BOOL
-
-msvcrt.memcpy.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
-msvcrt.memcpy.restype = ctypes.c_void_p
 # -------------------------------------------
 
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+def get_base_dir():
+    """실행 파일(EXE)이 위치한 실제 폴더 경로를 반환 (Nuitka 최신 버전 대응)"""
+    # 1. Nuitka onefile 빌드 시 실제 EXE 위치를 가리키는 환경 변수
+    # 스크린샷 진단 결과 NUITKA_ONEFILE_DIRECTORY 가 가장 정확함
+    for env_var in ['NUITKA_ONEFILE_DIRECTORY', 'NUITKA_PACKAGE_HOME']:
+        val = os.environ.get(env_var)
+        if val:
+            path = os.path.abspath(val)
+            if os.path.isfile(path): path = os.path.dirname(path)
+            return path
 
+    if getattr(sys, 'frozen', False):
+        # 2. 기타 빌드 환경 (sys.executable 등 활용)
+        exe_path = os.path.abspath(sys.executable)
+        if 'Temp' not in exe_path: return os.path.dirname(exe_path)
+        
+        argv_path = os.path.abspath(sys.argv[0])
+        if 'Temp' not in argv_path: return os.path.dirname(argv_path)
+        
+        return os.path.dirname(exe_path)
+    else:
+        # 스크립트 실행 환경
+        return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = get_base_dir()
 CONFIG_FILE = os.path.join(BASE_DIR, "settings.json")
+LICENSE_FILE = os.path.join(BASE_DIR, "license.lic")
+
+# --- [빌드 정보] ---
+BUILD_VERSION = "v1.00"
+BUILD_DATE = "2026-05-08"
+BUILD_TIME = "23:33:44"
 
 def get_resource_path(relative_path):
-    """ PyInstaller 호환 리소스 경로 반환 """
+    """ PyInstaller/Nuitka 호환 리소스 경로 반환 """
     if getattr(sys, 'frozen', False):
         base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
     else:
@@ -67,21 +95,17 @@ def get_resource_path(relative_path):
 def get_hwid():
     """기기 고유 정보를 조합하여 해싱된 HWID 생성"""
     try:
-        # PowerShell을 통해 메인보드 및 디스크 시리얼 추출 (wmic 미지원 환경 대응)
         cmd_mb = 'powershell "Get-CimInstance -ClassName Win32_BaseBoard | Select-Object -ExpandProperty SerialNumber"'
         mb_serial = subprocess.check_output(cmd_mb, shell=True).decode('cp949').strip()
         
         cmd_disk = 'powershell "Get-CimInstance -ClassName Win32_DiskDrive | Select-Object -ExpandProperty SerialNumber"'
         disk_serial = subprocess.check_output(cmd_disk, shell=True).decode('cp949').strip()
         
-        # 정보 조합 및 해싱
         raw_id = f"DS_{mb_serial}_{disk_serial}"
         hash_id = hashlib.sha256(raw_id.encode()).hexdigest().upper()
         return f"{hash_id[:4]}-{hash_id[4:8]}-{hash_id[8:12]}"
     except Exception as e:
-        # 최후의 보루: 레지스트리 MachineGuid 사용
         try:
-            import winreg
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography")
             guid, _ = winreg.QueryValueEx(key, "MachineGuid")
             hash_id = hashlib.sha256(guid.encode()).hexdigest().upper()
@@ -91,51 +115,82 @@ def get_hwid():
 
 # --- [보안 및 라이센스 설정] ---
 SECRET_KEY = "DS_CAPTURE_SECRET_KEY_2026_@!" 
-LICENSE_FILE = os.path.join(BASE_DIR, "license.lic")
 
 def check_license(app_name):
-    """라이센스 유효성 검사"""
+    """라이센스 유효성 검사 - 폴더 내 모든 .lic 파일을 스캔하여 HWID 매칭"""
+    from datetime import datetime
     hwid = get_hwid()
     
-    if not os.path.exists(LICENSE_FILE):
-        show_license_error(hwid, "라이센스 파일(license.lic)이 없습니다.")
-        return False
+    # 탐색할 폴더 리스트 (중앙 폴더 C:\license 우선 탐색)
+    target_folders = [r"C:\license", BASE_DIR]
+    
+    # 매칭되는 HWID는 찾았으나 검증에 실패한 경우의 에러 메시지들
+    fail_reason = ""
 
-    try:
-        with open(LICENSE_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+    for folder in target_folders:
+        if not os.path.exists(folder): continue
         
-        # 1. 서명 검증
-        msg = f"{data['hwid']}{data['app_name']}{data['expiry_date']}"
-        expected_sign = hmac.new(SECRET_KEY.encode(), msg.encode(), hashlib.sha256).hexdigest()
-        
-        if data['signature'] != expected_sign:
-            show_license_error(hwid, "라이센스 서명이 올바르지 않습니다. (변조됨)")
-            return False
+        try:
+            files = os.listdir(folder)
+        except: continue
+
+        for filename in files:
+            if not filename.lower().endswith(".lic"): continue
             
-        # 2. 프로그램 이름 일치 여부
-        if data['app_name'] != app_name:
-            show_license_error(hwid, f"해당 라이센스는 {data['app_name']}용입니다.")
-            return False
-            
-        # 3. HWID 일치 여부
-        if data['hwid'] != hwid:
-            show_license_error(hwid, "등록된 기기와 현재 기기의 ID가 일치하지 않습니다.")
-            return False
-            
-        # 4. 만료 날짜 확인
-        from datetime import datetime
-        if data['expiry_date'] != "PERMANENT":
-            expiry = datetime.strptime(data['expiry_date'], "%Y-%m-%d")
-            if datetime.now() > expiry:
-                show_license_error(hwid, f"라이센스가 만료되었습니다. (만료일: {data['expiry_date']})")
-                return False
+            path = os.path.join(folder, filename)
+            try:
+                with open(path, 'r', encoding='utf-8-sig') as f: # BOM 대응
+                    data = json.load(f)
                 
-        return True
-        
-    except Exception as e:
-        show_license_error(hwid, f"라이센스 파일을 읽는 중 오류가 발생했습니다: {e}")
-        return False
+                # 1. 기기 ID(HWID) 매칭 확인
+                if data.get('hwid') != hwid: continue
+                
+                # 2. 프로그램 이름 일치 여부
+                if data.get('app_name') != app_name:
+                    fail_reason = f"해당 라이센스는 {data.get('app_name')}용입니다."
+                    continue
+                
+                # 3. 서명 검증 (보안 - 최신 규격 단일 적용)
+                user_name = data.get('user_name')
+                expiry_str = data.get('expiry_date')
+                
+                if not user_name or not expiry_str:
+                    continue # 필수 정보 누락 시 건너뜀
+                
+                # 최신 서명 포맷: HWID + 앱이름 + 만료일 + 사용자이름
+                msg = f"{str(data['hwid'])}{str(data['app_name'])}{str(expiry_str)}{str(user_name)}"
+                expected_signature = hmac.new(SECRET_KEY.encode('utf-8'), msg.encode('utf-8'), hashlib.sha256).hexdigest()
+                
+                if data.get('signature') != expected_signature:
+                    fail_reason = "라이센스 서명이 올바르지 않습니다. (최신 규격이 아니거나 변조됨)"
+                    continue
+                
+                # 4. 만료 여부 확인
+                if expiry_str != "PERMANENT":
+                    try:
+                        expiry = datetime.strptime(expiry_str, "%Y-%m-%d")
+                        if datetime.now() > expiry:
+                            fail_reason = f"라이센스가 만료되었습니다. (만료일: {expiry_str})"
+                            continue
+                    except:
+                        fail_reason = "만료일 형식이 잘못되었습니다."
+                        continue
+                
+                # 모든 조건을 만족하는 라이센스를 찾음
+                return True, data
+            except:
+                continue
+
+    # 최종적으로 찾지 못한 경우
+    if fail_reason:
+        msg = f"라이센스 검증 실패:\n{fail_reason}\n\n대상 앱: {app_name}"
+    else:
+        msg = f"유효한 라이센스 파일을 찾을 수 없습니다.\n대상 앱: {app_name}\n(C:\\license 폴더에 본인 이름이 포함된 .lic 파일을 넣어주세요)"
+    
+    show_license_error(hwid, msg)
+    return False, None
+                
+    return True, found_data
 
 def show_license_error(hwid, message):
     """라이센스 오류 팝업창"""
@@ -228,12 +283,14 @@ class ResizableBox(tk.Toplevel):
         self.bind("<Return>", lambda e: self.trigger_capture())
         self.catcher.bind("<Return>", lambda e: self.trigger_capture())
         self.bind("<Configure>", self.sync_ui)
+        
+        self.is_capturing = False # 연속 캡처 방지 및 상태 관리
 
     def close_box(self):
         if hasattr(self, 'catcher') and self.catcher.winfo_exists():
             self.catcher.destroy()
         self.master.deiconify()
-        self.master.attributes("-topmost", True)
+        # self.master.attributes("-topmost", True)  <-- 이 부분을 제거하여 메인 창이 다시 topmost가 되지 않게 함
         self.destroy()
 
     def sync_ui(self, event=None):
@@ -317,27 +374,51 @@ class ResizableBox(tk.Toplevel):
         self.geometry(f"{new_w}x{new_h}")
 
     def trigger_capture(self):
+        if self.is_capturing: return
+        self.is_capturing = True
+        
         w, h = self.winfo_width(), self.winfo_height() - self.top_bar_h
         x = self.winfo_x()
         y = self.winfo_y() + self.top_bar_h if self.bar_position == "top" else self.winfo_y()
+        
+        # 캡처를 위해 잠시 숨김
         if hasattr(self, 'catcher') and self.catcher.winfo_exists():
-            self.catcher.destroy()
-        self.withdraw(); self.update(); time.sleep(0.2)
-        self.on_capture(x, y, x + w, y + h)
-        self.deiconify(); self.attributes("-topmost", True)
+            self.catcher.withdraw()
+            
+        self.withdraw()
+        self.update()
+        time.sleep(0.2)
+        
+        try:
+            self.on_capture(x, y, x + w, y + h)
+        finally:
+            # 캡처 후 다시 표시 및 포커스 복구
+            self.deiconify()
+            if hasattr(self, 'catcher') and self.catcher.winfo_exists():
+                self.catcher.deiconify()
+            
+            # self.attributes("-topmost", True)  <-- 이 줄을 삭제/주석 처리하여 캡처 후에도 항상 위가 되지 않게 함
+            self.focus_force()
+            if hasattr(self, 'catcher') and self.catcher.winfo_exists():
+                self.catcher.focus_force()
+            
+            # 짧은 딜레이 후 다음 캡처 허용
+            self.after(500, self._reset_capture_flag)
+
+    def _reset_capture_flag(self):
+        self.is_capturing = False
 
 class ImageEditor(tk.Toplevel):
     """캡처 이미지 편집기 — 더블클릭으로 열림"""
     MAX_UNDO = 10
-    PALETTE = ["#FF0000","#FF6600","#FFCC00","#00BB00","#0055FF",
-               "#9900CC","#FFFFFF","#AAAAAA","#555555","#000000",
-               "#FF99BB","#00CCCC"]
+    PALETTE = ["#FF0000", "#FF8C00", "#FFFF00", "#008000", 
+               "#0000FF", "#800080", "#FFFFFF", "#000000"]
 
     def __init__(self, parent, filepath, app):
         super().__init__(parent)
         self.filepath = filepath
         self.app = app          # MainApp 참조
-        self.attributes("-topmost", True)
+        self.attributes("-topmost", False)
         self.resizable(True, True)
         self.title(f"편집기 — {os.path.basename(filepath)}")
         try: self.iconbitmap(get_resource_path("icon.ico"))
@@ -359,10 +440,11 @@ class ImageEditor(tk.Toplevel):
         # ── 도구 상태 ─────────────────────────────────────────
         self.current_tool = "pen"
         self.draw_color   = "#FF0000"
-        self.custom_fill_color = None
-        self.line_width   = 3
+        self.custom_fill_color = "#FF0000"  # 초기값 설정
+        self.line_width   = 5
         self.font_family  = "Malgun Gothic"
         self.font_size    = 20
+        self.fill_shape_var = tk.BooleanVar(value=False)
 
         # ── 드로잉 임시 변수 ──────────────────────────────────
         self._sx = self._sy = 0
@@ -428,40 +510,54 @@ class ImageEditor(tk.Toplevel):
         self._select_tool("pen")
 
         # 3행: 색상, 두께, 폰트
+        # ── 3행: 선 색상, 채우기 색상, 두께, 글꼴 ──
         row3 = tk.Frame(top_area, bg="#1e272e", pady=10, padx=12)
         row3.pack(fill=tk.X)
         
+        # 1. 선 색상 영역
         tk.Label(row3, text="선 색상:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
         for c in self.PALETTE:
-            tk.Button(row3, bg=c, width=2, height=1, bd=1, relief="solid", cursor="hand2", command=lambda col=c: self._set_color(col)).pack(side=tk.LEFT, padx=2)
-        tk.Button(row3, text="⊕", bg="#485460", fg="white", bd=0, cursor="hand2", font=("Arial",11), command=self._pick_color).pack(side=tk.LEFT, padx=6)
-        self._color_ind = tk.Label(row3, bg=self.draw_color, width=3, height=1, relief="solid", bd=2)
-        self._color_ind.pack(side=tk.LEFT, padx=4)
+            tk.Button(row3, bg=c, width=2, height=1, bd=1, relief="solid", cursor="hand2", 
+                      command=lambda col=c: self._set_color(col)).pack(side=tk.LEFT, padx=2)
+        tk.Button(row3, text="⊕", bg="#485460", fg="white", bd=0, cursor="hand2", font=("Arial",10, "bold"), 
+                  command=self._pick_color, padx=8).pack(side=tk.LEFT, padx=5)
+        self._color_ind = tk.Label(row3, bg=self.draw_color, width=3, height=1, relief="solid", bd=1)
+        self._color_ind.pack(side=tk.LEFT, padx=3)
 
         tk.Frame(row3, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
         
-        tk.Label(row3, text="채우기:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
-        tk.Button(row3, text="자동", bg="#485460", fg="white", font=("Malgun Gothic", 8), bd=0, cursor="hand2", command=self._reset_fill_color).pack(side=tk.LEFT, padx=2)
-        tk.Button(row3, text="⊕", bg="#485460", fg="white", bd=0, cursor="hand2", font=("Arial",11), command=self._pick_fill_color).pack(side=tk.LEFT, padx=2)
-        self._fill_color_ind = tk.Label(row3, bg=self.draw_color, text="자동", fg="white", font=("Arial", 7), width=4, height=1, relief="solid", bd=2)
-        self._fill_color_ind.pack(side=tk.LEFT, padx=4)
-
-        tk.Frame(row3, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
-        
-        tk.Label(row3, text="두께:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
+        # 2. 선 두께 영역
+        tk.Label(row3, text="선 두께:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
         self._width_var = tk.IntVar(value=self.line_width)
-        tk.Spinbox(row3, from_=1, to=100, textvariable=self._width_var, width=4, font=("Arial", 10), command=lambda: setattr(self,"line_width",self._width_var.get())).pack(side=tk.LEFT)
+        tk.Spinbox(row3, from_=1, to=100, textvariable=self._width_var, width=4, font=("Arial", 10), 
+                   command=lambda: setattr(self,"line_width",self._width_var.get())).pack(side=tk.LEFT)
                    
         tk.Frame(row3, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
+
+        # 3. 채우기 영역 (체크박스 포함)
+        tk.Checkbutton(row3, text="채우기", variable=self.fill_shape_var, bg="#1e272e", fg="#d2dae2", 
+                       selectcolor="#2f3640", activebackground="#1e272e", activeforeground="white",
+                       font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(5,6))
+        for c in self.PALETTE:
+            tk.Button(row3, bg=c, width=2, height=1, bd=1, relief="solid", cursor="hand2", 
+                      command=lambda col=c: self._set_fill_color(col)).pack(side=tk.LEFT, padx=2)
+        tk.Button(row3, text="⊕", bg="#485460", fg="white", bd=0, cursor="hand2", font=("Arial",10, "bold"), 
+                  command=self._pick_fill_color, padx=8).pack(side=tk.LEFT, padx=5)
+        self._fill_color_ind = tk.Label(row3, bg=self.custom_fill_color, width=3, height=1, relief="solid", bd=1)
+        self._fill_color_ind.pack(side=tk.LEFT, padx=3)
+
+        tk.Frame(row3, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
         
+        # 4. 글꼴 영역
         tk.Label(row3, text="글꼴:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
         self._font_var = tk.StringVar(value=self.font_family)
-        ttk.Combobox(row3, textvariable=self._font_var, values=["Malgun Gothic", "Arial", "Consolas", "Impact"], state="readonly", width=12, font=("Arial", 9)).pack(side=tk.LEFT, padx=2)
+        ttk.Combobox(row3, textvariable=self._font_var, values=["Malgun Gothic", "Arial", "Consolas", "Impact"], state="readonly", width=10, font=("Arial", 9)).pack(side=tk.LEFT, padx=2)
         self._font_var.trace_add("write", lambda *a: setattr(self,"font_family",self._font_var.get()))
 
         tk.Label(row3, text="크기:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(8,4))
         self._fsize_var = tk.IntVar(value=self.font_size)
-        tk.Spinbox(row3, from_=8, to=120, textvariable=self._fsize_var, width=4, font=("Arial", 10), command=lambda: setattr(self,"font_size",self._fsize_var.get())).pack(side=tk.LEFT)
+        tk.Spinbox(row3, from_=8, to=120, textvariable=self._fsize_var, width=3, font=("Arial", 10), 
+                   command=lambda: setattr(self,"font_size",self._fsize_var.get())).pack(side=tk.LEFT)
 
         # ── 캔버스 영역 ─────────────────────────────
         self.canvas = tk.Canvas(self, bg="#2f3640", cursor="crosshair", highlightthickness=0)
@@ -478,8 +574,6 @@ class ImageEditor(tk.Toplevel):
     def _set_color(self, color):
         self.draw_color = color
         self._color_ind.config(bg=color)
-        if self.custom_fill_color is None:
-            self._fill_color_ind.config(bg=color)
 
     def _pick_color(self):
         c = colorchooser.askcolor(color=self.draw_color, parent=self)[1]
@@ -489,12 +583,12 @@ class ImageEditor(tk.Toplevel):
     def _pick_fill_color(self):
         c = colorchooser.askcolor(color=self.custom_fill_color or self.draw_color, parent=self)[1]
         if c:
-            self.custom_fill_color = c
-            self._fill_color_ind.config(bg=c, text="")
+            self._set_fill_color(c)
 
-    def _reset_fill_color(self):
-        self.custom_fill_color = None
-        self._fill_color_ind.config(bg=self.draw_color, text="자동")
+    def _set_fill_color(self, color):
+        self.custom_fill_color = color
+        self._fill_color_ind.config(bg=color)
+        self.fill_shape_var.set(True)
 
     # ══════════════════════════════════════════════
     #  캔버스 표시 (fit)
@@ -574,13 +668,13 @@ class ImageEditor(tk.Toplevel):
             self._temp_items.append(self.canvas.create_line(sx,sy,x,y,fill=col,width=lw,
                                     arrow=tk.LAST, arrowshape=(16,20,6)))
         elif t == "rect":
-            if getattr(self, "fill_shape_var", None) and self.fill_shape_var.get():
+            if self.fill_shape_var.get():
                 fill_c = self.custom_fill_color or col
                 self._temp_items.append(self.canvas.create_rectangle(sx,sy,x,y,fill=fill_c,outline=col,width=lw))
             else:
                 self._temp_items.append(self.canvas.create_rectangle(sx,sy,x,y,outline=col,width=lw))
         elif t == "ellipse":
-            if getattr(self, "fill_shape_var", None) and self.fill_shape_var.get():
+            if self.fill_shape_var.get():
                 fill_c = self.custom_fill_color or col
                 self._temp_items.append(self.canvas.create_oval(sx,sy,x,y,fill=fill_c,outline=col,width=lw))
             else:
@@ -645,7 +739,7 @@ class ImageEditor(tk.Toplevel):
         elif t == "rect":
             x0,y0 = min(isx,ix),min(isy,iy)
             x1,y1 = max(isx,ix),max(isy,iy)
-            if getattr(self, "fill_shape_var", None) and self.fill_shape_var.get():
+            if self.fill_shape_var.get():
                 fill_rgb = self._hex2rgb(self.custom_fill_color or self.draw_color)
                 draw.rectangle([x0,y0,x1,y1], fill=(*fill_rgb, 255), outline=col_rgba, width=lw)
             else:
@@ -654,7 +748,7 @@ class ImageEditor(tk.Toplevel):
         elif t == "ellipse":
             x0,y0 = min(isx,ix),min(isy,iy)
             x1,y1 = max(isx,ix),max(isy,iy)
-            if getattr(self, "fill_shape_var", None) and self.fill_shape_var.get():
+            if self.fill_shape_var.get():
                 fill_rgb = self._hex2rgb(self.custom_fill_color or self.draw_color)
                 draw.ellipse([x0,y0,x1,y1], fill=(*fill_rgb, 255), outline=col_rgba, width=lw)
             else:
@@ -797,11 +891,37 @@ class ImageEditor(tk.Toplevel):
         self.app.copy_image_to_clipboard(self._final_img())
 
 class MainApp:
-    def __init__(self):
+    def __init__(self, license_data=None):
+        self.license_data = license_data or {}
+        # 작업표시줄 아이콘 강제 적용을 위한 설정
+        try:
+            myappid = 'mycompany.ds_capture.1.0' 
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except:
+            pass
+
         self.root = tk.Tk()
-        self.root.title("DS Capture v1.03")
-        try: self.root.iconbitmap(get_resource_path("icon.ico"))
-        except Exception: pass
+        
+        # 타이틀에 라이센스 사용자 표시
+        user_info = self.license_data.get('user_name', 'Free User')
+        self.root.title(f"DS Capture v1.00 - [{user_info}]")
+        
+        # --- [시작프로그램 모드 처리] ---
+        self.is_startup = "--startup" in sys.argv
+            
+        try: 
+            # 1. 창 상단 아이콘 (ico 파일)
+            self.root.iconbitmap(get_resource_path("icon.ico"))
+            
+            # 2. 작업표시줄 아이콘 (png 파일 사용)
+            # icon.png가 있어야 함. 없으면 icon.ico에서 추출 시도.
+            # 여기서는 icon.ico가 이미 있으므로 그대로 사용하거나 png를 추가할 수 있음.
+            # 일단 ico 파일을 그대로 iconphoto에 써도 작동함.
+            icon_img = Image.open(get_resource_path("icon.ico"))
+            self.tk_icon = ImageTk.PhotoImage(icon_img)
+            self.root.iconphoto(True, self.tk_icon)
+        except Exception: 
+            pass
         
         try:
             dpi = self.root.winfo_fpixels('1i')
@@ -813,7 +933,7 @@ class MainApp:
         win_h = int(480 * self.scale_factor)
         self.root.geometry(f"{win_w}x{win_h}")
         self.root.minsize(win_w, win_h)
-        self.root.attributes("-topmost", True)
+        self.root.attributes("-topmost", False)
         self.sw, self.sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         
         # [수정] 기본값 설정 및 설정 불러오기
@@ -825,6 +945,10 @@ class MainApp:
         self.close_action = "tray"
         
         self.load_config() # 시작할 때 저장된 설정 읽기
+        
+        # 설정 파일이 없으면 기본값으로 즉시 생성
+        if not os.path.exists(CONFIG_FILE):
+            self.save_config()
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close_window)
 
@@ -867,16 +991,20 @@ class MainApp:
         cap_style = {"bg": "#2f3542", "fg": "white", "font": ("Malgun Gothic", 10, "bold"), "pady": 12, "activebackground": "#57606f", "cursor": "hand2", "bd": 0}
         opt_style = {"bg": "#4b6584", "fg": "white", "font": ("Malgun Gothic", 10, "bold"), "pady": 10, "activebackground": "#778ca3", "cursor": "hand2", "bd": 0}
 
-        btn_con = tk.Frame(self.left_frame); btn_con.pack(fill=tk.BOTH, expand=True, padx=40)
+        btn_con = tk.Frame(self.left_frame)
+        btn_con.pack(fill=tk.BOTH, expand=True, padx=40)
         
         tk.Button(btn_con, text="지정크기 캡처", command=self.open_box, **cap_style).pack(fill=tk.X, pady=(0, 2))
         
-        f = tk.Frame(btn_con); f.pack(pady=(0, 15))
+        f = tk.Frame(btn_con)
+        f.pack(pady=(0, 15))
         self.ent_w = tk.Entry(f, width=5, justify='center', font=("Arial", 10), bd=2, relief="groove")
-        self.ent_w.insert(0, getattr(self, 'saved_box_width', "800")); self.ent_w.pack(side=tk.LEFT, padx=3)
+        self.ent_w.insert(0, getattr(self, 'saved_box_width', "800"))
+        self.ent_w.pack(side=tk.LEFT, padx=3)
         tk.Label(f, text="×", font=("Arial", 10, "bold"), fg="#a4b0be").pack(side=tk.LEFT)
         self.ent_h = tk.Entry(f, width=5, justify='center', font=("Arial", 10), bd=2, relief="groove")
-        self.ent_h.insert(0, getattr(self, 'saved_box_height', "600")); self.ent_h.pack(side=tk.LEFT, padx=3)
+        self.ent_h.insert(0, getattr(self, 'saved_box_height', "600"))
+        self.ent_h.pack(side=tk.LEFT, padx=3)
         
         tk.Button(btn_con, text="자유 드래그 캡처", command=self.start_drag, **cap_style).pack(fill=tk.X, pady=(0, 2))
         
@@ -900,6 +1028,10 @@ class MainApp:
         self.update_thumbnails()
 
         self.create_tray_icon()
+        
+        # 모든 초기화가 끝난 후, 시작프로그램 모드라면 창을 숨김
+        if self.is_startup:
+            self.root.withdraw()
 
     def open_settings_window(self):
         if hasattr(self, 'settings_win') and self.settings_win.winfo_exists():
@@ -911,12 +1043,12 @@ class MainApp:
         pop.title("환경설정 (Settings)")
         try: pop.iconbitmap(get_resource_path("icon.ico"))
         except Exception: pass
-        pop.geometry(f"{int(400 * self.scale_factor)}x{int(440 * self.scale_factor)}")
-        pop.attributes("-topmost", True)
+        pop.geometry(f"{int(400 * self.scale_factor)}x{int(460 * self.scale_factor)}")
+        pop.attributes("-topmost", False)
         pop.config(bg="#1e272e")
         
         btn_con = tk.Frame(pop, bg="#1e272e")
-        btn_con.pack(fill=tk.BOTH, expand=True, padx=int(30 * self.scale_factor), pady=int(20 * self.scale_factor))
+        btn_con.pack(fill=tk.BOTH, expand=True, padx=int(30 * self.scale_factor), pady=(int(20 * self.scale_factor), int(5 * self.scale_factor)))
         
         opt_style = {"bg": "#4b6584", "fg": "white", "font": ("Malgun Gothic", 10, "bold"), "pady": int(10 * self.scale_factor), "activebackground": "#778ca3", "cursor": "hand2", "bd": 0}
 
@@ -925,21 +1057,24 @@ class MainApp:
         tk.Button(btn_con, text="저장 폴더 열기", command=self.open_save_folder, **opt_style).pack(fill=tk.X, pady=(0, 4))
         
         tk.Label(btn_con, text="저장 파일 형식", bg="#1e272e", fg="#a4b0be", font=("Malgun Gothic", 9, "bold")).pack(pady=(15, 0), anchor="w")
-        fmt_f = tk.Frame(btn_con, bg="#1e272e"); fmt_f.pack(fill=tk.X, pady=(5, 0))
+        fmt_f = tk.Frame(btn_con, bg="#1e272e")
+        fmt_f.pack(fill=tk.X, pady=(5, 0))
         self.btn_png = tk.Button(fmt_f, text="PNG", command=lambda: self.set_format("png"), bg="#00d2d3", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_png.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         self.btn_jpg = tk.Button(fmt_f, text="JPG", command=lambda: self.set_format("jpg"), bg="#4b6584", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_jpg.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
         tk.Label(btn_con, text="닫기 버튼 동작", bg="#1e272e", fg="#a4b0be", font=("Malgun Gothic", 9, "bold")).pack(pady=(15, 0), anchor="w")
-        close_f = tk.Frame(btn_con, bg="#1e272e"); close_f.pack(fill=tk.X, pady=(5, 0))
+        close_f = tk.Frame(btn_con, bg="#1e272e")
+        close_f.pack(fill=tk.X, pady=(5, 0))
         self.btn_close_tray = tk.Button(close_f, text="트레이로", command=lambda: self.set_close_action("tray"), bg="#00d2d3", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_close_tray.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         self.btn_close_exit = tk.Button(close_f, text="완전 종료", command=lambda: self.set_close_action("exit"), bg="#4b6584", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_close_exit.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
         tk.Label(btn_con, text="윈도우 시작 시 자동실행", bg="#1e272e", fg="#a4b0be", font=("Malgun Gothic", 9, "bold")).pack(pady=(15, 0), anchor="w")
-        startup_f = tk.Frame(btn_con, bg="#1e272e"); startup_f.pack(fill=tk.X, pady=(5, 0))
+        startup_f = tk.Frame(btn_con, bg="#1e272e")
+        startup_f.pack(fill=tk.X, pady=(5, 0))
         self.btn_startup_on = tk.Button(startup_f, text="자동실행 켬", command=lambda: self.set_startup(True), bg="#4b6584", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_startup_on.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         self.btn_startup_off = tk.Button(startup_f, text="자동실행 끔", command=lambda: self.set_startup(False), bg="#00d2d3", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
@@ -948,22 +1083,37 @@ class MainApp:
         self.update_format_buttons()
         self.update_close_action_buttons()
         self.update_startup_buttons()
+        
+        # --- [빌드 정보 표시] ---
+        tk.Frame(btn_con, height=1, bg="#3d3d3d").pack(fill=tk.X, pady=(25, 10)) # 구분선
+        
+        info_f = tk.Frame(btn_con, bg="#1e272e")
+        info_f.pack(fill=tk.X)
+        
+        tk.Label(info_f, text=f"Version: {BUILD_VERSION}", bg="#1e272e", fg="#a4b0be", 
+                 font=("Malgun Gothic", 8)).pack(side=tk.LEFT)
+        tk.Label(info_f, text=f"Build: {BUILD_DATE} {BUILD_TIME}", bg="#1e272e", fg="#a4b0be", 
+                 font=("Malgun Gothic", 8)).pack(side=tk.RIGHT)
 
     # --- [신규] 설정 저장/불러오기 로직 ---
     def save_config(self):
         """현재 설정을 JSON 파일로 저장합니다."""
-        config = {
-            "save_dir": self.save_dir,
-            "save_format": self.save_format,
-            "shortcuts": self.shortcuts,
-            "close_action": getattr(self, 'close_action', 'tray'),
-            "box_width": self.ent_w.get() if hasattr(self, 'ent_w') else getattr(self, 'saved_box_width', "800"),
-            "box_height": self.ent_h.get() if hasattr(self, 'ent_h') else getattr(self, 'saved_box_height', "600"),
-            "drag_ratio": self.drag_ratio_var.get() if hasattr(self, 'drag_ratio_var') else getattr(self, 'saved_drag_ratio', "4:3 비율"),
-            "recent_captures": self.recent_captures[:10]
-        }
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=4)
+        try:
+            config = {
+                "save_dir": self.save_dir,
+                "save_format": self.save_format,
+                "shortcuts": self.shortcuts,
+                "close_action": getattr(self, 'close_action', 'tray'),
+                "box_width": self.ent_w.get() if hasattr(self, 'ent_w') else getattr(self, 'saved_box_width', "800"),
+                "box_height": self.ent_h.get() if hasattr(self, 'ent_h') else getattr(self, 'saved_box_height', "600"),
+                "drag_ratio": self.drag_ratio_var.get() if hasattr(self, 'drag_ratio_var') else getattr(self, 'saved_drag_ratio', "4:3 비율"),
+                "recent_captures": self.recent_captures[:10]
+            }
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(config, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            from tkinter import messagebox
+            messagebox.showerror("저장 오류", f"설정 파일을 저장하는 중 오류가 발생했습니다:\n{str(e)}\n\n경로: {CONFIG_FILE}")
 
     def load_config(self):
         """저장된 JSON 파일에서 설정을 읽어옵니다."""
@@ -1034,7 +1184,8 @@ class MainApp:
             value, _ = winreg.QueryValueEx(key, "DSCapture")
             winreg.CloseKey(key)
             path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
-            return value == f'"{path}"'
+            # 인자 포함 여부와 상관없이 경로가 일치하는지 확인
+            return f'"{path}"' in value
         except Exception:
             return False
 
@@ -1043,7 +1194,8 @@ class MainApp:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
             if enable:
                 path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
-                winreg.SetValueEx(key, "DSCapture", 0, winreg.REG_SZ, f'"{path}"')
+                # 시작프로그램 등록 시 --startup 인자 추가
+                winreg.SetValueEx(key, "DSCapture", 0, winreg.REG_SZ, f'"{path}" --startup')
             else:
                 try:
                     winreg.DeleteValue(key, "DSCapture")
@@ -1070,7 +1222,7 @@ class MainApp:
         pop = tk.Toplevel(self.root)
         pop.title("단축키 설정")
         pop.geometry("420x350")
-        pop.attributes("-topmost", True)
+        pop.attributes("-topmost", False)
         modes = [("지정크기 캡처", "fixed"), ("자유 드래그", "drag"), ("전체화면 캡처", "full")]
         keys_list = [chr(i) for i in range(65, 91)] + [str(i) for i in range(10)] + [f"F{i}" for i in range(1, 13)]
         results = {}
@@ -1120,7 +1272,7 @@ class MainApp:
             pystray.MenuItem('Open Folder', self.open_save_folder),
             pystray.MenuItem('Exit', self.quit_app)
         )
-        self.tray_icon = pystray.Icon("CapturePro", icon_img, "Capture Pro", menu)
+        self.tray_icon = pystray.Icon("DSCapture", icon_img, "DS Capture", menu)
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
     def open_save_folder(self, icon=None, item=None):
@@ -1139,7 +1291,7 @@ class MainApp:
 
     def show_window(self, icon=None, item=None):
         self.root.deiconify()
-        self.root.attributes("-topmost", True)
+        # self.root.attributes("-topmost", True)  <-- 이 부분을 제거하여 창을 다시 띄울 때 항상 위가 되지 않게 함
 
     def quit_app(self, icon=None, item=None):
         self.save_config()
@@ -1186,7 +1338,8 @@ class MainApp:
         
         ov = tk.Toplevel()
         ov.attributes("-fullscreen", True, "-topmost", True)
-        cv = tk.Canvas(ov, highlightthickness=0, cursor="none"); cv.pack(fill=tk.BOTH, expand=True)
+        cv = tk.Canvas(ov, highlightthickness=0, cursor="none")
+        cv.pack(fill=tk.BOTH, expand=True)
         
         ov.dark_photo = ImageTk.PhotoImage(dark_img)
         cv.create_image(0, 0, image=ov.dark_photo, anchor="nw")
@@ -1231,7 +1384,6 @@ class MainApp:
             else:
                 max_abs_dx = self.sw - x0 if dx > 0 else x0
                 max_abs_dy = self.sh - y0 if dy > 0 else y0
-                
             abs_dx, abs_dy = abs(dx), abs(dy)
             
             if abs_dx > max_abs_dx and abs_dx > 0:
@@ -1243,12 +1395,8 @@ class MainApp:
                 scale = max_abs_dy / abs_dy
                 dx *= scale; dy *= scale
             
-            if is_ctrl:
-                x1, y1 = x0 - dx, y0 - dy
-                x2, y2 = x0 + dx, y0 + dy
-            else:
-                x1, y1 = x0, y0
-                x2, y2 = x0 + dx, y0 + dy
+            x1, y1 = x0 - dx if is_ctrl else x0, y0 - dy if is_ctrl else y0
+            x2, y2 = x0 + dx, y0 + dy
                 
             return x1, y1, x2, y2
 
@@ -1275,11 +1423,18 @@ class MainApp:
             x1, y1, x2, y2 = get_rect(e)
             cx_min, cy_min = min(x1, x2), min(y1, y2)
             cx_max, cy_max = max(x1, x2), max(y1, y2)
-            ov.destroy(); self.execute_capture(cx_min, cy_min, cx_max, cy_max); self.show_window()
-        cv.bind("<Motion>", on_hover); cv.bind("<Button-1>", on_p); cv.bind("<B1-Motion>", on_m); cv.bind("<ButtonRelease-1>", on_r)
+            ov.destroy()
+            self.execute_capture(cx_min, cy_min, cx_max, cy_max)
+            self.show_window()
+        cv.bind("<Motion>", on_hover)
+        cv.bind("<Button-1>", on_p)
+        cv.bind("<B1-Motion>", on_m)
+        cv.bind("<ButtonRelease-1>", on_r)
 
     def full_capture(self):
-        self.root.withdraw(); self.root.update(); time.sleep(0.3)
+        self.root.withdraw()
+        self.root.update()
+        time.sleep(0.3)
         self.execute_capture(0, 0, self.sw, self.sh)
         self.show_window()
 
@@ -1359,8 +1514,10 @@ class MainApp:
         try:
             img = ImageGrab.grab(bbox=(l, t, r, b), all_screens=True)
             self.copy_image_to_clipboard(img)
-            if self.save_format == "jpg": img.convert("RGB").save(filepath, quality=95)
-            else: img.save(filepath)
+            if self.save_format == "jpg":
+                img.convert("RGB").save(filepath, quality=95)
+            else:
+                img.save(filepath)
             
             self.recent_captures.insert(0, filepath)
             if len(self.recent_captures) > 10:
@@ -1398,11 +1555,31 @@ def enforce_single_instance():
         return False, None
     return True, mutex
 
+def focus_existing_window():
+    """이미 실행 중인 DS Capture 창을 찾아 활성화함"""
+    def callback(hwnd, extra):
+        title = ctypes.create_unicode_buffer(256)
+        ctypes.windll.user32.GetWindowTextW(hwnd, title, 256)
+        if title.value.startswith("DS Capture"):
+            # SW_RESTORE(9)로 최소화 해제 후 앞으로 가져오기
+            ctypes.windll.user32.ShowWindow(hwnd, 9)
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            return False # 찾았으므로 중단
+        return True
+
+    enum_windows_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    # 콜백 함수가 가비지 컬렉션되지 않도록 변수에 할당 후 사용
+    cb_ptr = enum_windows_proc(callback)
+    ctypes.windll.user32.EnumWindows(cb_ptr, 0)
+
 if __name__ == "__main__":
     is_unique, mutex = enforce_single_instance()
     if not is_unique:
+        focus_existing_window()
         sys.exit(0)
         
     # 라이센스 체크 (프로그램명: DS_CAPTURE)
-    if check_license("DS_CAPTURE"):
-        MainApp().root.mainloop()
+    is_valid, lic_data = check_license("DS_CAPTURE")
+    if is_valid:
+        app = MainApp(lic_data)
+        app.root.mainloop()

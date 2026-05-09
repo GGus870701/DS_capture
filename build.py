@@ -10,14 +10,15 @@ def main():
     with open(py_file, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    match = re.search(r'self\.root\.title\("DS Capture v1\.(\d+)"\)', content)
+    # 타이틀 바에 라이센스 정보가 포함된 포맷 대응
+    match = re.search(r'self\.root\.title\(f"DS Capture v1\.(\d+)', content)
     
     if not match:
-        print("버전 정보를 capture.py에서 찾을 수 없습니다.")
+        print("버전 정보를 DS Capture.py에서 찾을 수 없습니다.")
         return
 
     current_minor = int(match.group(1))
-    new_minor = current_minor + 1
+    new_minor = current_minor + 1 # 다음 빌드부터는 자동으로 버전이 올라갑니다.
     new_version_str = f"1.{new_minor:02d}"
     
     # 2. DS Capture.py 의 윈도우 타이틀 버전 업데이트
@@ -28,7 +29,7 @@ def main():
     with open(py_file, 'w', encoding='utf-8') as f:
         f.write(new_content)
         
-    print(f"버전 업데이트 완료: {old_title} -> {new_title}")
+    print(f"빌드 대상 버전: {new_title}")
     
     # 3. Nuitka로 패키징 실행 (보안성 강화)
     print(f"[{new_title}] Nuitka 컴파일을 시작합니다. (기계어 변환으로 소스코드 보호)")
@@ -41,6 +42,7 @@ def main():
         "--windows-console-mode=disable",
         "--enable-plugin=tk-inter",
         "--windows-icon-from-ico=icon.ico",
+        "--include-data-files=icon.ico=icon.ico",
         "--assume-yes-for-downloads",
         "--output-dir=dist_production",
         "--output-filename=DS Capture.exe",
@@ -53,6 +55,26 @@ def main():
     if result.returncode == 0:
         print("\n[SUCCESS] Nuitka 컴파일 및 패키징이 성공적으로 완료되었습니다!")
         print(f"결과물: dist_production/DS Capture.exe (내부 표기버전: {new_title})")
+        
+        # 4. 더미 파일(임시 빌드 폴더) 삭제
+        print("\n임시 빌드 파일을 정리하는 중...")
+        import shutil
+        base_path = "dist_production"
+        dummy_folders = [
+            os.path.join(base_path, "DS Capture.build"),
+            os.path.join(base_path, "DS Capture.onefile-build"),
+            os.path.join(base_path, "DS Capture.dist")
+        ]
+        
+        for folder in dummy_folders:
+            if os.path.exists(folder):
+                try:
+                    shutil.rmtree(folder)
+                    print(f"삭제 완료: {folder}")
+                except Exception as e:
+                    print(f"삭제 실패: {folder} ({e})")
+        
+        print("빌드 정리 완료.")
     else:
         print("\n[ERROR] 패키징 중 오류가 발생했습니다.")
 
