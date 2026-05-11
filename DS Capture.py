@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, ttk, colorchooser, simpledialog
+from tkinter import filedialog, ttk, colorchooser, simpledialog, messagebox
 import time
 import os
 import ctypes
@@ -13,48 +13,10 @@ import winreg
 import hmac
 import hashlib
 import subprocess
-
-# --- [진단용 시작 로그] ---
-# 다른 컴퓨터에서 실행 안 될 경우 startup.log 파일로 원인 파악
-_log_path = None
-def _log(msg):
-    global _log_path
-    try:
-        if _log_path is None:
-            if getattr(sys, 'frozen', False):
-                _log_path = os.path.join(os.path.dirname(sys.executable), "startup.log")
-            else:
-                _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "startup.log")
-        with open(_log_path, 'a', encoding='utf-8') as f:
-            import datetime
-            f.write(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}\n")
-    except:
-        pass
-
-_log("=== DS Capture 시작 ===")
-_log(f"Python: {sys.version}")
-_log(f"Frozen: {getattr(sys, 'frozen', False)}")
-
-try:
-    from PIL import ImageGrab, Image, ImageDraw, ImageTk, ImageOps, ImageFont, ImageEnhance
-    _log("PIL import 성공")
-except Exception as e:
-    _log(f"PIL import 실패: {e}")
-    raise
-
-try:
-    import keyboard
-    _log("keyboard import 성공")
-except Exception as e:
-    _log(f"keyboard import 실패: {e}")
-    keyboard = None
-
-try:
-    import pystray
-    _log("pystray import 성공")
-except Exception as e:
-    _log(f"pystray import 실패: {e}")
-    pystray = None
+from PIL import ImageGrab, Image, ImageDraw, ImageTk, ImageOps, ImageFont, ImageEnhance
+import keyboard
+import pystray
+from pystray import MenuItem as item
 
 # --- [시작 프로그램 실행 경로 문제 해결] ---
 # 실행 파일 경로로 작업 디렉토리 변경 (license.lic 파일을 찾지 못하는 문제 방지)
@@ -244,9 +206,7 @@ def check_license(app_name):
     if fail_reason:
         msg = f"라이센스 검증 실패:\n{fail_reason}\n\n대상 앱: {app_name}"
     else:
-        # 어디를 뒤졌는지 상세히 알려줌 (사용자 편의성)
-        searched_paths = "\n".join([f"- {os.path.abspath(f)}" for f in target_folders if f])
-        msg = f"유효한 라이센스 파일을 찾을 수 없습니다.\n대상 앱: {app_name}\n\n[탐색된 경로]\n{searched_paths}\n\n위 폴더 중 한 곳에 .lic 파일을 넣어주세요."
+        msg = f"유효한 라이센스 파일을 찾을 수 없습니다.\n대상 앱: {app_name}\n\n[방법] 실행 파일(.exe)과 같은 폴더에\n본인 기기 ID가 포함된 .lic 파일을 넣어주세요."
     
     show_license_error(hwid, msg)
     return False, None
