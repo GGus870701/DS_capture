@@ -80,9 +80,9 @@ CONFIG_FILE = os.path.join(BASE_DIR, "settings.json")
 LICENSE_FILE = os.path.join(BASE_DIR, "license.lic")
 
 # --- [빌드 정보] ---
-BUILD_VERSION = "v1.00"
-BUILD_DATE = "2026-05-08"
-BUILD_TIME = "23:33:44"
+BUILD_VERSION = "v1.01"
+BUILD_DATE = "2026-05-11"
+BUILD_TIME = "10:30:45"
 
 def get_resource_path(relative_path):
     """ PyInstaller/Nuitka 호환 리소스 경로 반환 """
@@ -904,7 +904,7 @@ class MainApp:
         
         # 타이틀에 라이센스 사용자 표시
         user_info = self.license_data.get('user_name', 'Free User')
-        self.root.title(f"DS Capture v1.00 - [{user_info}]")
+        self.root.title(f"DS Capture {BUILD_VERSION} - [{user_info}]")
         
         # --- [시작프로그램 모드 처리] ---
         self.is_startup = "--startup" in sys.argv
