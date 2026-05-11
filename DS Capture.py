@@ -1,6 +1,5 @@
 import tkinter as tk
 from tkinter import filedialog, ttk, colorchooser, simpledialog
-from PIL import ImageGrab, Image, ImageDraw, ImageTk, ImageOps, ImageFont, ImageEnhance
 import time
 import os
 import ctypes
@@ -8,14 +7,54 @@ from ctypes import wintypes
 import io
 import json
 import math
-import keyboard  # pip install keyboard
-import pystray   # pip install pystray
 import threading
 import sys
 import winreg
 import hmac
 import hashlib
 import subprocess
+
+# --- [진단용 시작 로그] ---
+# 다른 컴퓨터에서 실행 안 될 경우 startup.log 파일로 원인 파악
+_log_path = None
+def _log(msg):
+    global _log_path
+    try:
+        if _log_path is None:
+            if getattr(sys, 'frozen', False):
+                _log_path = os.path.join(os.path.dirname(sys.executable), "startup.log")
+            else:
+                _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "startup.log")
+        with open(_log_path, 'a', encoding='utf-8') as f:
+            import datetime
+            f.write(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}\n")
+    except:
+        pass
+
+_log("=== DS Capture 시작 ===")
+_log(f"Python: {sys.version}")
+_log(f"Frozen: {getattr(sys, 'frozen', False)}")
+
+try:
+    from PIL import ImageGrab, Image, ImageDraw, ImageTk, ImageOps, ImageFont, ImageEnhance
+    _log("PIL import 성공")
+except Exception as e:
+    _log(f"PIL import 실패: {e}")
+    raise
+
+try:
+    import keyboard
+    _log("keyboard import 성공")
+except Exception as e:
+    _log(f"keyboard import 실패: {e}")
+    keyboard = None
+
+try:
+    import pystray
+    _log("pystray import 성공")
+except Exception as e:
+    _log(f"pystray import 실패: {e}")
+    pystray = None
 
 # --- [시작 프로그램 실행 경로 문제 해결] ---
 # 실행 파일 경로로 작업 디렉토리 변경 (license.lic 파일을 찾지 못하는 문제 방지)
@@ -27,6 +66,15 @@ else:
 # DPI 인식 설정
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    pass
+
+# [신규] 작업표시줄 아이콘 강제 설정 (AppUserModelID) - 오류 발생 시 무시하도록 보호
+try:
+    myappid = 'ds.capture.v1.0'
+    # Windows 7 이상에서만 작동하는 API이므로 예외 처리 필수
+    if hasattr(ctypes.windll.shell32, 'SetCurrentProcessExplicitAppUserModelID'):
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception:
     pass
 
@@ -52,54 +100,52 @@ kernel32.GlobalUnlock.restype = wintypes.BOOL
 # -------------------------------------------
 
 def get_base_dir():
-    """실행 파일(EXE)이 위치한 실제 폴더 경로를 반환 (Nuitka 최신 버전 대응)"""
-    # 1. Nuitka onefile 빌드 시 실제 EXE 위치를 가리키는 환경 변수
-    # 스크린샷 진단 결과 NUITKA_ONEFILE_DIRECTORY 가 가장 정확함
-    for env_var in ['NUITKA_ONEFILE_DIRECTORY', 'NUITKA_PACKAGE_HOME']:
-        val = os.environ.get(env_var)
-        if val:
-            path = os.path.abspath(val)
-            if os.path.isfile(path): path = os.path.dirname(path)
-            return path
-
+    """실행 파일(EXE)이 위치한 실제 폴더 경로를 반환"""
+    # 1. PyInstaller/Nuitka 등 패키징 환경 확인
     if getattr(sys, 'frozen', False):
-        # 2. 기타 빌드 환경 (sys.executable 등 활용)
+        # 2. Nuitka 전용 환경 변수 확인
+        for env_var in ['NUITKA_ONEFILE_DIRECTORY', 'NUITKA_PACKAGE_HOME']:
+            val = os.environ.get(env_var)
+            if val and os.path.exists(val):
+                return os.path.abspath(val) if os.path.isdir(val) else os.path.dirname(os.path.abspath(val))
+        
+        # 3. PyInstaller 및 일반적인 EXE 실행 경로 (가장 확실함)
+        # sys.executable은 언제나 실제 EXE의 위치를 가리킵니다.
         exe_path = os.path.abspath(sys.executable)
-        if 'Temp' not in exe_path: return os.path.dirname(exe_path)
-        
-        argv_path = os.path.abspath(sys.argv[0])
-        if 'Temp' not in argv_path: return os.path.dirname(argv_path)
-        
         return os.path.dirname(exe_path)
-    else:
-        # 스크립트 실행 환경
-        return os.path.dirname(os.path.abspath(__file__))
+    
+    # 4. 스크립트 실행 환경
+    return os.path.dirname(os.path.abspath(__file__))
 
 BASE_DIR = get_base_dir()
 CONFIG_FILE = os.path.join(BASE_DIR, "settings.json")
+# 라이센스 폴더 경로 정의 (EXE와 같은 위치의 license 폴더 또는 EXE 바로 옆)
+LICENSE_DIR = os.path.join(BASE_DIR, "license")
 LICENSE_FILE = os.path.join(BASE_DIR, "license.lic")
 
 # --- [빌드 정보] ---
-BUILD_VERSION = "v1.01"
+BUILD_VERSION = "1.00.15"
 BUILD_DATE = "2026-05-11"
-BUILD_TIME = "10:30:45"
+BUILD_TIME = "14:29:02"
 
 def get_resource_path(relative_path):
-    """ PyInstaller/Nuitka 호환 리소스 경로 반환 """
+    """ 리소스 절대 경로 반환 """
     if getattr(sys, 'frozen', False):
-        base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+        base_path = BASE_DIR
     else:
+        # 스크립트 실행 시 현재 파일의 위치 기준
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
 def get_hwid():
     """기기 고유 정보를 조합하여 해싱된 HWID 생성"""
     try:
+        # PowerShell 결과에서 첫 번째 줄(첫 번째 기기)만 가져오도록 수정 (C# Checker와 일치)
         cmd_mb = 'powershell "Get-CimInstance -ClassName Win32_BaseBoard | Select-Object -ExpandProperty SerialNumber"'
-        mb_serial = subprocess.check_output(cmd_mb, shell=True).decode('cp949').strip()
+        mb_serial = subprocess.check_output(cmd_mb, shell=True).decode('cp949').strip().splitlines()[0].strip()
         
         cmd_disk = 'powershell "Get-CimInstance -ClassName Win32_DiskDrive | Select-Object -ExpandProperty SerialNumber"'
-        disk_serial = subprocess.check_output(cmd_disk, shell=True).decode('cp949').strip()
+        disk_serial = subprocess.check_output(cmd_disk, shell=True).decode('cp949').strip().splitlines()[0].strip()
         
         raw_id = f"DS_{mb_serial}_{disk_serial}"
         hash_id = hashlib.sha256(raw_id.encode()).hexdigest().upper()
@@ -121,14 +167,14 @@ def check_license(app_name):
     from datetime import datetime
     hwid = get_hwid()
     
-    # 탐색할 폴더 리스트 (중앙 폴더 C:\license 우선 탐색)
-    target_folders = [r"C:\license", BASE_DIR]
+    # 탐색할 폴더 리스트 (중앙 폴더 C:\license, EXE 옆 license 폴더, EXE 바로 옆)
+    target_folders = [r"C:\license", LICENSE_DIR, BASE_DIR]
     
     # 매칭되는 HWID는 찾았으나 검증에 실패한 경우의 에러 메시지들
     fail_reason = ""
 
     for folder in target_folders:
-        if not os.path.exists(folder): continue
+        if not folder or not os.path.exists(folder): continue
         
         try:
             files = os.listdir(folder)
@@ -138,59 +184,73 @@ def check_license(app_name):
             if not filename.lower().endswith(".lic"): continue
             
             path = os.path.join(folder, filename)
+            data_raw = None
+            
+            # 여러 인코딩 시도 (한글 포함 대응)
+            for enc in ['utf-8-sig', 'utf-8', 'cp949']:
+                try:
+                    with open(path, 'r', encoding=enc) as f:
+                        data_raw = json.load(f)
+                    break
+                except:
+                    continue
+            
+            if data_raw is None:
+                # 파일은 있으나 읽지 못한 경우 (JSON 형식 오류 등)
+                fail_reason = f"파일을 읽을 수 없거나 형식이 잘못되었습니다: {filename}"
+                continue
+
             try:
-                with open(path, 'r', encoding='utf-8-sig') as f: # BOM 대응
-                    data = json.load(f)
+                # [수정] 복수 라이센스 지원 (리스트 형태 처리)
+                license_list = data_raw if isinstance(data_raw, list) else [data_raw]
                 
-                # 1. 기기 ID(HWID) 매칭 확인
-                if data.get('hwid') != hwid: continue
-                
-                # 2. 프로그램 이름 일치 여부
-                if data.get('app_name') != app_name:
-                    fail_reason = f"해당 라이센스는 {data.get('app_name')}용입니다."
-                    continue
-                
-                # 3. 서명 검증 (보안 - 최신 규격 단일 적용)
-                user_name = data.get('user_name')
-                expiry_str = data.get('expiry_date')
-                
-                if not user_name or not expiry_str:
-                    continue # 필수 정보 누락 시 건너뜀
-                
-                # 최신 서명 포맷: HWID + 앱이름 + 만료일 + 사용자이름
-                msg = f"{str(data['hwid'])}{str(data['app_name'])}{str(expiry_str)}{str(user_name)}"
-                expected_signature = hmac.new(SECRET_KEY.encode('utf-8'), msg.encode('utf-8'), hashlib.sha256).hexdigest()
-                
-                if data.get('signature') != expected_signature:
-                    fail_reason = "라이센스 서명이 올바르지 않습니다. (최신 규격이 아니거나 변조됨)"
-                    continue
-                
-                # 4. 만료 여부 확인
-                if expiry_str != "PERMANENT":
-                    try:
-                        expiry = datetime.strptime(expiry_str, "%Y-%m-%d")
-                        if datetime.now() > expiry:
-                            fail_reason = f"라이센스가 만료되었습니다. (만료일: {expiry_str})"
-                            continue
-                    except:
-                        fail_reason = "만료일 형식이 잘못되었습니다."
+                found_ids = []
+                for data in license_list:
+                    f_hwid = data.get('hwid')
+                    if f_hwid: found_ids.append(f_hwid)
+                    
+                    # 1. 기기 ID(HWID) 매칭 확인
+                    if f_hwid != hwid: continue
+                    
+                    # 2. 프로그램 이름 일치 여부
+                    if data.get('app_name') != app_name:
+                        fail_reason = f"대상 기기({hwid})는 맞지만,\n이 라이센스는 {data.get('app_name')}용입니다."
                         continue
+                    
+                    # 3. 서명 검증
+                    user_name = data.get('user_name')
+                    expiry_str = data.get('expiry_date')
+                    if not user_name or not expiry_str: continue
+                    
+                    msg = f"{str(data['hwid'])}{str(data['app_name'])}{str(expiry_str)}{str(user_name)}"
+                    expected_signature = hmac.new(SECRET_KEY.encode('utf-8'), msg.encode('utf-8'), hashlib.sha256).hexdigest()
+                    
+                    if data.get('signature') != expected_signature:
+                        fail_reason = f"사용자 '{user_name}'의 라이센스 서명이 일치하지 않습니다.\n(KeyGen에서 다시 발급받아 주세요)"
+                        continue
+                    
+                    return True, data
                 
-                # 모든 조건을 만족하는 라이센스를 찾음
-                return True, data
-            except:
+                # 파일은 찾았으나 이 기기용 ID가 없을 때
+                if not fail_reason:
+                    ids_str = ", ".join(found_ids) if found_ids else "없음"
+                    fail_reason = f"라이센스 파일({filename})을 확인했으나,\n이 기기({hwid})용 인증 정보가 없습니다.\n(파일 내 ID: {ids_str})"
+
+            except Exception as e:
+                fail_reason = f"라이센스 처리 중 오류: {str(e)}"
                 continue
 
     # 최종적으로 찾지 못한 경우
     if fail_reason:
         msg = f"라이센스 검증 실패:\n{fail_reason}\n\n대상 앱: {app_name}"
     else:
-        msg = f"유효한 라이센스 파일을 찾을 수 없습니다.\n대상 앱: {app_name}\n(C:\\license 폴더에 본인 이름이 포함된 .lic 파일을 넣어주세요)"
+        # 어디를 뒤졌는지 상세히 알려줌 (사용자 편의성)
+        searched_paths = "\n".join([f"- {os.path.abspath(f)}" for f in target_folders if f])
+        msg = f"유효한 라이센스 파일을 찾을 수 없습니다.\n대상 앱: {app_name}\n\n[탐색된 경로]\n{searched_paths}\n\n위 폴더 중 한 곳에 .lic 파일을 넣어주세요."
     
     show_license_error(hwid, msg)
     return False, None
-                
-    return True, found_data
+
 
 def show_license_error(hwid, message):
     """라이센스 오류 팝업창"""
@@ -199,6 +259,14 @@ def show_license_error(hwid, message):
     
     err_win = tk.Toplevel(root)
     err_win.title("라이센스 인증 필요")
+    
+    # [수정] 서브 윈도우 아이콘 명시적 지정
+    try:
+        ico_path = get_resource_path("DS_capture.ico")
+        if os.path.exists(ico_path):
+            err_win.iconbitmap(ico_path)
+    except:
+        pass
     
     win_w, win_h = 450, 270
     sw, sh = err_win.winfo_screenwidth(), err_win.winfo_screenheight()
@@ -419,10 +487,15 @@ class ImageEditor(tk.Toplevel):
         self.filepath = filepath
         self.app = app          # MainApp 참조
         self.attributes("-topmost", False)
-        self.resizable(True, True)
         self.title(f"편집기 — {os.path.basename(filepath)}")
-        try: self.iconbitmap(get_resource_path("icon.ico"))
-        except Exception: pass
+        
+        # [수정] 서브 윈도우 아이콘 명시적 지정
+        try:
+            ico_path = get_resource_path("DS_capture.ico")
+            if os.path.exists(ico_path):
+                self.iconbitmap(ico_path)
+        except:
+            pass
 
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         target_w = int(sw * 0.75)
@@ -656,12 +729,20 @@ class ImageEditor(tk.Toplevel):
         t   = self.current_tool
 
         if t == "pen":
-            self._pen_pts.append((x, y))
-            pts = self._pen_pts
-            if len(pts) >= 2:
-                self._temp_items.append(
-                    self.canvas.create_line(*pts[-2], *pts[-1], fill=col, width=lw,
-                                           capstyle=tk.ROUND, joinstyle=tk.ROUND))
+            # [수정] 더 강력한 Shift 키 판정 (Tkinter state + Windows API)
+            is_shift = (event.state & 0x0001) or (ctypes.windll.user32.GetKeyState(0x10) & 0x8000)
+            if is_shift:
+                if abs(x - sx) > abs(y - sy): y = sy
+                else: x = sx
+                self._pen_pts = [(sx, sy), (x, y)]
+                self._temp_items.append(self.canvas.create_line(sx, sy, x, y, fill=col, width=lw, capstyle=tk.ROUND))
+            else:
+                self._pen_pts.append((x, y))
+                pts = self._pen_pts
+                if len(pts) >= 2:
+                    self._temp_items.append(
+                        self.canvas.create_line(*pts[-2], *pts[-1], fill=col, width=lw,
+                                               capstyle=tk.ROUND, joinstyle=tk.ROUND))
         elif t == "line":
             self._temp_items.append(self.canvas.create_line(sx,sy,x,y,fill=col,width=lw))
         elif t == "arrow":
@@ -722,6 +803,13 @@ class ImageEditor(tk.Toplevel):
         lw = self.line_width
 
         if t == "pen":
+            # [수정] 마지막 릴리즈 시점에도 동일한 Shift 판정 적용
+            is_shift = (event.state & 0x0001) or (ctypes.windll.user32.GetKeyState(0x10) & 0x8000)
+            if is_shift:
+                if abs(x - sx) > abs(y - sy): y = sy
+                else: x = sx
+                self._pen_pts = [(sx, sy), (x, y)]
+            
             pts = [self._c2i(px,py) for px,py in self._pen_pts]
             if len(pts) >= 2:
                 draw.line(pts, fill=col_rgba, width=lw, joint="curve")
@@ -893,34 +981,25 @@ class ImageEditor(tk.Toplevel):
 class MainApp:
     def __init__(self, license_data=None):
         self.license_data = license_data or {}
-        # 작업표시줄 아이콘 강제 적용을 위한 설정
-        try:
-            myappid = 'mycompany.ds_capture.1.0' 
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-        except:
-            pass
+        # [수정] AppUserModelID 중복 설정 제거 — 모듈 최상단에서 1회만 호출
 
         self.root = tk.Tk()
         
-        # 타이틀에 라이센스 사용자 표시
+        # 타이틀에 라이센스 사용자 및 단축 버전 표시 (x.xx 형식)
         user_info = self.license_data.get('user_name', 'Free User')
-        self.root.title(f"DS Capture {BUILD_VERSION} - [{user_info}]")
+        short_ver = ".".join(BUILD_VERSION.split(".")[:2])
+        self.root.title(f"DS Capture {short_ver} - [{user_info}]")
         
         # --- [시작프로그램 모드 처리] ---
         self.is_startup = "--startup" in sys.argv
             
-        try: 
-            # 1. 창 상단 아이콘 (ico 파일)
-            self.root.iconbitmap(get_resource_path("icon.ico"))
-            
-            # 2. 작업표시줄 아이콘 (png 파일 사용)
-            # icon.png가 있어야 함. 없으면 icon.ico에서 추출 시도.
-            # 여기서는 icon.ico가 이미 있으므로 그대로 사용하거나 png를 추가할 수 있음.
-            # 일단 ico 파일을 그대로 iconphoto에 써도 작동함.
-            icon_img = Image.open(get_resource_path("icon.ico"))
-            self.tk_icon = ImageTk.PhotoImage(icon_img)
-            self.root.iconphoto(True, self.tk_icon)
-        except Exception: 
+        # --- [아이콘 설정] ---
+        # [수정] iconphoto + iconbitmap 충돌 제거 → iconbitmap 단독 사용
+        ico_path = get_resource_path("DS_capture.ico")
+        try:
+            if os.path.exists(ico_path):
+                self.root.iconbitmap(ico_path)
+        except:
             pass
         
         try:
@@ -1041,8 +1120,14 @@ class MainApp:
         pop = tk.Toplevel(self.root)
         self.settings_win = pop
         pop.title("환경설정 (Settings)")
-        try: pop.iconbitmap(get_resource_path("icon.ico"))
-        except Exception: pass
+        
+        # [수정] 서브 윈도우 아이콘 명시적 지정
+        try:
+            ico_path = get_resource_path("DS_capture.ico")
+            if os.path.exists(ico_path):
+                pop.iconbitmap(ico_path)
+        except:
+            pass
         pop.geometry(f"{int(400 * self.scale_factor)}x{int(460 * self.scale_factor)}")
         pop.attributes("-topmost", False)
         pop.config(bg="#1e272e")
@@ -1079,6 +1164,10 @@ class MainApp:
         self.btn_startup_on.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         self.btn_startup_off = tk.Button(startup_f, text="자동실행 끔", command=lambda: self.set_startup(False), bg="#00d2d3", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_startup_off.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+
+        # [신규] 하단에 전체 버전 정보 표시
+        tk.Label(pop, text=f"Version {BUILD_VERSION} (Build: {BUILD_DATE})", 
+                 bg="#1e272e", fg="#57606f", font=("Arial", 8)).pack(side=tk.BOTTOM, pady=10)
 
         self.update_format_buttons()
         self.update_close_action_buttons()
@@ -1221,6 +1310,14 @@ class MainApp:
     def popup_shortcut_settings(self):
         pop = tk.Toplevel(self.root)
         pop.title("단축키 설정")
+        
+        # [수정] 서브 윈도우 아이콘 명시적 지정
+        try:
+            ico_path = get_resource_path("DS_capture.ico")
+            if os.path.exists(ico_path):
+                pop.iconbitmap(ico_path)
+        except:
+            pass
         pop.geometry("420x350")
         pop.attributes("-topmost", False)
         modes = [("지정크기 캡처", "fixed"), ("자유 드래그", "drag"), ("전체화면 캡처", "full")]
@@ -1264,9 +1361,14 @@ class MainApp:
 
     # --- 트레이 아이콘 및 기타 로직 (기존과 동일) ---
     def create_tray_icon(self):
-        icon_img = Image.new('RGB', (64, 64), color=(47, 53, 66))
-        d = ImageDraw.Draw(icon_img)
-        d.rectangle([16, 16, 48, 48], outline=(0, 210, 211), width=4)
+        try:
+            icon_path = get_resource_path("DS_capture.ico")
+            if os.path.exists(icon_path):
+                icon_img = Image.open(icon_path)
+            else:
+                icon_img = Image.new('RGB', (64, 64), color=(47, 53, 66))
+        except:
+            icon_img = Image.new('RGB', (64, 64), color=(47, 53, 66))
         menu = pystray.Menu(
             pystray.MenuItem('Open', self.show_window),
             pystray.MenuItem('Open Folder', self.open_save_folder),
