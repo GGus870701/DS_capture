@@ -15,7 +15,7 @@ def main():
         print(f"Error: {py_file} 파일을 찾을 수 없습니다.")
         return
 
-    # [신규] 환경 정보 동기화 (Agents.md 업데이트)
+    # 환경 정보 동기화 (Agents.md 업데이트)
     agents_file = 'Agents.md'
     current_python = sys.executable
     current_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
@@ -84,7 +84,7 @@ def main():
         print("빌드 정보 업데이트 완료.")
 
     # 3. PyInstaller 명령어 구성
-    print(f"PyInstaller 패키징을 시작합니다...")
+    print(f"PyInstaller 패키징을 시작합니다 (One File 모드)...")
     
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -95,9 +95,9 @@ def main():
     ]
     
     if is_test:
-        # 테스트 빌드: 폴더 형태, 콘솔 창 표시
-        cmd.extend(["--onedir", "--console"])
-        dist_path = os.path.join(test_dir, "DS Capture")
+        # 테스트 빌드: 단일 파일, 콘솔 창 표시
+        cmd.extend(["--onefile", "--console"])
+        dist_path = os.path.join(test_dir, "DS Capture.exe")
     else:
         # 배포 빌드: 단일 파일, 콘솔 창 숨김
         cmd.extend(["--onefile", "--windowed"])
@@ -106,7 +106,7 @@ def main():
     # 공통 옵션
     cmd.extend([
         "--icon=DS_capture.ico",
-        "--add-data=DS_capture.ico;.",  # 아이콘 파일을 EXE 내부에 포함 (런타임용)
+        "--add-data=DS_capture.ico;.",  # 아이콘 파일 포함
         f"--name=DS Capture",
         f"--distpath={target_dir}",
         py_file

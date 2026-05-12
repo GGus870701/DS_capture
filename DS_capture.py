@@ -20,6 +20,7 @@ from pystray import MenuItem as item
 import win32gui
 import win32com.client
 import pythoncom
+import DS_image_editor
 
 # --- [시작 프로그램 실행 경로 문제 해결] ---
 # 실행 파일 경로로 작업 디렉토리 변경 (license.lic 파일을 찾지 못하는 문제 방지)
@@ -65,24 +66,18 @@ kernel32.GlobalUnlock.restype = wintypes.BOOL
 # -------------------------------------------
 
 def get_base_dir():
-    """실행 파일(EXE)이 위치한 실제 폴더 경로를 반환"""
-    if getattr(sys, 'frozen', False):
-        # PyInstaller 및 일반적인 EXE 실행 경로
-        return os.path.dirname(os.path.abspath(sys.executable))
-    
-    # 스크립트 실행 환경
-    return os.path.dirname(os.path.abspath(__file__))
+    """실행 파일(EXE)이 위치한 실제 폴더 경로를 반환 (상단에서 이미 chdir 완료)"""
+    return os.getcwd()
 
 BASE_DIR = get_base_dir()
 CONFIG_FILE = os.path.join(BASE_DIR, "settings.json")
 # 라이센스 폴더 경로 정의 (EXE와 같은 위치의 license 폴더 또는 EXE 바로 옆)
 LICENSE_DIR = os.path.join(BASE_DIR, "license")
-LICENSE_FILE = os.path.join(BASE_DIR, "license.lic")
 
 # --- [빌드 정보] ---
-BUILD_VERSION = "1.00.22"
-BUILD_DATE = "2026-05-11"
-BUILD_TIME = "15:57:48"
+BUILD_VERSION = "1.00.24"
+BUILD_DATE = "2026-05-12"
+BUILD_TIME = "11:16:22"
 
 def get_resource_path(relative_path):
     """ 리소스 절대 경로 반환 (PyInstaller 지원) """
@@ -252,6 +247,49 @@ def show_license_error(hwid, message):
     err_win.bind("<Escape>", lambda e: sys.exit(0))
     err_win.protocol("WM_DELETE_WINDOW", lambda: sys.exit(0))
     root.mainloop()
+
+# --- [메인 실행 제어] -----------------------
+def enforce_single_instance():
+    mutex_name = "Global\\DSCapture_Unique_Instance_Mutex"
+    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
+    if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
+        return False, None
+    return True, mutex
+
+def focus_existing_window():
+    """이미 실행 중인 DS Capture 창을 찾아 활성화함"""
+    def callback(hwnd, extra):
+        title = ctypes.create_unicode_buffer(256)
+        ctypes.windll.user32.GetWindowTextW(hwnd, title, 256)
+        if title.value.startswith("DS Capture"):
+            # SW_RESTORE(9)로 최소화 해제 후 앞으로 가져오기
+            ctypes.windll.user32.ShowWindow(hwnd, 9)
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            return False # 찾았으므로 중단
+        return True
+
+    enum_windows_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    cb_ptr = enum_windows_proc(callback)
+    ctypes.windll.user32.EnumWindows(cb_ptr, 0)
+
+def main_entry():
+    """프로그램 진입점: 중복 실행 방지 및 라이센스 체크"""
+    # [신규] 이미지 편집기 모드로 실행된 경우 (멀티 엔진 방식)
+    if "--editor" in sys.argv and len(sys.argv) >= 3:
+        img_path = sys.argv[2]
+        DS_image_editor.run_editor(img_path)
+        sys.exit(0)
+
+    is_unique, mutex = enforce_single_instance()
+    if not is_unique:
+        focus_existing_window()
+        sys.exit(0)
+        
+    # 라이센스 체크 (프로그램명: DS_CAPTURE)
+    is_valid, lic_data = check_license("DS_CAPTURE")
+    if is_valid:
+        app = MainApp(lic_data)
+        app.root.mainloop()
 # -------------------------------------------
 
 
@@ -439,540 +477,6 @@ class ResizableBox(tk.Toplevel):
     def _reset_capture_flag(self):
         self.is_capturing = False
 
-class ImageEditor(tk.Toplevel):
-    """캡처 이미지 편집기 — 더블클릭으로 열림"""
-    MAX_UNDO = 10
-    PALETTE = ["#FF0000", "#FF8C00", "#FFFF00", "#008000", 
-               "#0000FF", "#800080", "#FFFFFF", "#000000"]
-
-    def __init__(self, parent, filepath, app):
-        super().__init__(parent)
-        self.withdraw() # 깜빡임 방지
-        self.filepath = filepath
-        self.app = app          # MainApp 참조
-        self.attributes("-topmost", False)
-        self.title(f"편집기 — {os.path.basename(filepath)}")
-        set_window_icon(self)
-
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        target_w = int(sw * 0.75)
-        target_h = int(target_w * 9 / 16)
-        x = (sw - target_w) // 2
-        y = (sh - target_h) // 2
-        self.geometry(f"{target_w}x{target_h}+{x}+{y}")
-
-        # ── 이미지 상태 ──────────────────────────────────────
-        raw = Image.open(filepath)
-        self.edit_img = raw.convert("RGBA")
-        self.undo_stack = []
-        self.redo_stack = []
-
-        # ── 도구 상태 ─────────────────────────────────────────
-        self.current_tool = "pen"
-        self.draw_color   = "#FF0000"
-        self.custom_fill_color = "#FF0000"  # 초기값 설정
-        self.line_width   = 5
-        self.font_family  = "Malgun Gothic"
-        self.font_size    = 20
-        self.fill_shape_var = tk.BooleanVar(value=False)
-
-        # ── 드로잉 임시 변수 ──────────────────────────────────
-        self._sx = self._sy = 0
-        self._temp_items = []
-        self._pen_pts    = []
-        self.scale       = 1.0
-        self._tk_img     = None
-        self._tool_btns  = {}
-        
-        # [신규] 도구 전환 시 상태 복구를 위한 변수
-        self.prev_lw = self.line_width
-        self.prev_color = self.draw_color
-
-        self._build_ui()
-        self.after(50, self._fit_and_refresh)
-        self._bind_events()
-        self.protocol("WM_DELETE_WINDOW", self.destroy)
-        
-        self.deiconify() # 준비 완료 후 표시
-        self.focus_force()
-
-    # ══════════════════════════════════════════════
-    #  UI 구성
-    # ══════════════════════════════════════════════
-    def _build_ui(self):
-        # ── 상단 툴바 영역 ────────────────────────────
-        top_area = tk.Frame(self, bg="#1e272e")
-        top_area.pack(fill=tk.X)
-        
-        bs = dict(bg="#485460", fg="white", font=("Malgun Gothic", 9, "bold"),
-                  bd=0, padx=12, pady=6, cursor="hand2",
-                  activebackground="#0fbcf9", activeforeground="white")
-
-        # 1행: 파일/편집 옵션 + 해상도 표시
-        row1 = tk.Frame(top_area, bg="#1e272e", pady=8, padx=12)
-        row1.pack(fill=tk.X)
-        
-        tk.Button(row1, text="💾 저장",        command=self.save,              **bs).pack(side=tk.LEFT, padx=3)
-        tk.Button(row1, text="📁 다른이름저장", command=self.save_as,           **bs).pack(side=tk.LEFT, padx=3)
-        tk.Button(row1, text="📋 클립보드",     command=self.copy_to_clipboard, **bs).pack(side=tk.LEFT, padx=3)
-        tk.Frame(row1, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
-        tk.Button(row1, text="↩ 실행취소",     command=self.undo,              **bs).pack(side=tk.LEFT, padx=2)
-        tk.Button(row1, text="↪ 재실행",       command=self.redo,              **bs).pack(side=tk.LEFT, padx=2)
-        tk.Frame(row1, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
-        tk.Button(row1, text="↺ 90°",          command=lambda: self.rotate(-90),**bs).pack(side=tk.LEFT, padx=2)
-        tk.Button(row1, text="↻ 90°",          command=lambda: self.rotate(90), **bs).pack(side=tk.LEFT, padx=2)
-        tk.Button(row1, text="↔ 좌우반전",     command=lambda: self.flip("h"), **bs).pack(side=tk.LEFT, padx=2)
-        tk.Button(row1, text="↕ 상하반전",     command=lambda: self.flip("v"), **bs).pack(side=tk.LEFT, padx=2)
-        
-        self._size_lbl = tk.Label(row1, text="", bg="#1e272e", fg="#00d8d6", font=("Malgun Gothic", 10, "bold"))
-        self._size_lbl.pack(side=tk.RIGHT, padx=10)
-
-        # 2행: 도구 선택
-        row2 = tk.Frame(top_area, bg="#2f3640", pady=10, padx=12)
-        row2.pack(fill=tk.X)
-        
-        tk.Label(row2, text="도구:", bg="#2f3640", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,10))
-        
-        tools = [("펜", "pen"), ("직선","line"), ("화살표","arrow"),
-                 ("사각형","rect"), ("원","ellipse"), ("텍스트","text"),
-                 ("형광펜","highlight"), ("모자이크","mosaic"), ("자르기","crop")]
-        for label, name in tools:
-            b = tk.Button(row2, text=label, height=1,
-                          bg="#718093", fg="white", bd=0, cursor="hand2",
-                          font=("Malgun Gothic", 9, "bold"), activebackground="#0fbcf9",
-                          padx=14, pady=5,
-                          command=lambda n=name: self._select_tool(n))
-            b.pack(side=tk.LEFT, padx=3)
-            self._tool_btns[name] = b
-        self._select_tool("pen")
-
-        # 3행: 색상, 두께, 폰트
-        # ── 3행: 선 색상, 채우기 색상, 두께, 글꼴 ──
-        row3 = tk.Frame(top_area, bg="#1e272e", pady=10, padx=12)
-        row3.pack(fill=tk.X)
-        
-        def create_palette(parent, callback):
-            for c in self.PALETTE:
-                tk.Button(parent, bg=c, width=2, height=1, bd=1, relief="solid", cursor="hand2", 
-                          command=lambda col=c: callback(col)).pack(side=tk.LEFT, padx=2)
-            tk.Button(parent, text="⊕", bg="#485460", fg="white", bd=0, cursor="hand2", font=("Malgun Gothic",10, "bold"), 
-                      command=self._pick_color if callback == self._set_color else self._pick_fill_color, padx=8).pack(side=tk.LEFT, padx=5)
-
-        # 1. 선 색상 영역
-        tk.Label(row3, text="선 색상:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
-        create_palette(row3, self._set_color)
-        self._color_ind = tk.Label(row3, bg=self.draw_color, width=3, height=1, relief="solid", bd=1)
-        self._color_ind.pack(side=tk.LEFT, padx=3)
-
-        tk.Frame(row3, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
-        
-        # 2. 선 두께 영역
-        tk.Label(row3, text="선 두께:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
-        self._width_var = tk.IntVar(value=self.line_width)
-        tk.Spinbox(row3, from_=1, to=100, textvariable=self._width_var, width=4, font=("Malgun Gothic", 10), 
-                   command=lambda: setattr(self,"line_width",self._width_var.get())).pack(side=tk.LEFT)
-                   
-        tk.Frame(row3, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
-
-        # 3. 채우기 영역 (체크박스 포함)
-        tk.Checkbutton(row3, text="채우기", variable=self.fill_shape_var, bg="#1e272e", fg="#d2dae2", 
-                       selectcolor="#2f3640", activebackground="#1e272e", activeforeground="white",
-                       font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(5,6))
-        create_palette(row3, self._set_fill_color)
-        self._fill_color_ind = tk.Label(row3, bg=self.custom_fill_color, width=3, height=1, relief="solid", bd=1)
-        self._fill_color_ind.pack(side=tk.LEFT, padx=3)
-
-        tk.Frame(row3, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
-        
-        # 4. 글꼴 영역
-        tk.Label(row3, text="글꼴:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
-        self._font_var = tk.StringVar(value=self.font_family)
-        ttk.Combobox(row3, textvariable=self._font_var, values=["Malgun Gothic", "Consolas", "Impact"], state="readonly", width=10, font=("Malgun Gothic", 9)).pack(side=tk.LEFT, padx=2)
-        self._font_var.trace_add("write", lambda *a: setattr(self,"font_family",self._font_var.get()))
-
-        tk.Label(row3, text="크기:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(8,4))
-        self._fsize_var = tk.IntVar(value=self.font_size)
-        tk.Spinbox(row3, from_=8, to=120, textvariable=self._fsize_var, width=3, font=("Malgun Gothic", 10), 
-                   command=lambda: setattr(self,"font_size",self._fsize_var.get())).pack(side=tk.LEFT)
-
-        # ── 캔버스 영역 ─────────────────────────────
-        self.canvas = tk.Canvas(self, bg="#2f3640", cursor="crosshair", highlightthickness=0)
-        self.canvas.pack(fill=tk.BOTH, expand=True)
-
-    # ══════════════════════════════════════════════
-    #  도구 선택 / 색상
-    # ══════════════════════════════════════════════
-    def _select_tool(self, name):
-        prev_t = self.current_tool
-        self.current_tool = name
-        for n, b in self._tool_btns.items():
-            b.config(bg="#0fbcf9" if n == name else "#718093")
-        
-        # 1. 형광펜으로 들어갈 때: 현재 설정을 저장하고 형광펜 전용 설정 적용
-        if name == "highlight":
-            if prev_t != "highlight":
-                self.prev_lw = self.line_width
-                self.prev_color = self.draw_color
-            
-            self.draw_color = "#FFFF00"
-            self.line_width = 25
-            self._color_ind.config(bg=self.draw_color)
-            self._width_var.set(25)
-            
-        # 2. 형광펜에서 나갈 때: 저장했던 이전 설정을 복구
-        elif prev_t == "highlight":
-            self.line_width = self.prev_lw
-            self.draw_color = self.prev_color
-            self._color_ind.config(bg=self.draw_color)
-            self._width_var.set(self.line_width)
-
-    def _set_color(self, color):
-        self.draw_color = color
-        self._color_ind.config(bg=color)
-
-    def _pick_color(self):
-        c = colorchooser.askcolor(color=self.draw_color, parent=self)[1]
-        if c:
-            self._set_color(c)
-
-    def _pick_fill_color(self):
-        c = colorchooser.askcolor(color=self.custom_fill_color or self.draw_color, parent=self)[1]
-        if c:
-            self._set_fill_color(c)
-
-    def _set_fill_color(self, color):
-        self.custom_fill_color = color
-        self._fill_color_ind.config(bg=color)
-        self.fill_shape_var.set(True)
-
-    # ══════════════════════════════════════════════
-    #  캔버스 표시 (fit)
-    # ══════════════════════════════════════════════
-    def _fit_and_refresh(self):
-        self.update_idletasks()
-        cw = max(self.canvas.winfo_width(),  400)
-        ch = max(self.canvas.winfo_height(), 300)
-        iw, ih = self.edit_img.size
-        self.scale = min(1.0, cw/iw, ch/ih)
-        self._refresh_canvas()
-        self._size_lbl.config(text=f"{iw} × {ih} px  ({self.scale*100:.0f}%)")
-
-    def _refresh_canvas(self):
-        iw, ih = self.edit_img.size
-        dw = max(1, int(iw * self.scale))
-        dh = max(1, int(ih * self.scale))
-        try:
-            r_filter = Image.Resampling.BILINEAR
-        except AttributeError:
-            r_filter = Image.BILINEAR
-        disp = self.edit_img.convert("RGB").resize((dw, dh), r_filter)
-        self._tk_img = ImageTk.PhotoImage(disp)
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor="nw", image=self._tk_img)
-
-    def _c2i(self, cx, cy):
-        """캔버스 → 이미지 좌표"""
-        return int(cx / self.scale), int(cy / self.scale)
-
-    def _get_norm_rect(self, x1, y1, x2, y2):
-        """정규화된 (x0, y0, x1, y1) 반환"""
-        return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
-
-    def _is_shift_pressed(self, event):
-        """Shift 키 눌림 여부 판정 (Tkinter + Windows API)"""
-        return (event.state & 0x0001) or (ctypes.windll.user32.GetKeyState(0x10) & 0x8000)
-
-    # ══════════════════════════════════════════════
-    #  이벤트 바인딩
-    # ══════════════════════════════════════════════
-    def _bind_events(self):
-        self.canvas.bind("<ButtonPress-1>",   self._on_press)
-        self.canvas.bind("<B1-Motion>",        self._on_drag)
-        self.canvas.bind("<ButtonRelease-1>",  self._on_release)
-        self.bind("<Control-z>",               lambda e: self.undo())
-        self.bind("<Control-Z>",               lambda e: self.undo())
-        self.bind("<Control-y>",               lambda e: self.redo())
-        self.bind("<Control-Y>",               lambda e: self.redo())
-        self.bind("<Escape>",                  lambda e: self._esc_close())
-        self.bind("<Configure>",               self._on_configure)
-
-    def _esc_close(self):
-        self.destroy()
-        return "break"
-
-    def _on_configure(self, event):
-        if event.widget == self:
-            if hasattr(self, '_cfg_job') and self._cfg_job is not None:
-                self.after_cancel(self._cfg_job)
-            self._cfg_job = self.after(50, self._fit_and_refresh)
-
-    def _on_press(self, event):
-        self._sx, self._sy = event.x, event.y
-        self._pen_pts = [(event.x, event.y)]
-        for item in self._temp_items:
-            self.canvas.delete(item)
-        self._temp_items = []
-
-    def _on_drag(self, event):
-        # 사각형, 원, 직선 등 고무줄 형태의 도구만 기존 가이드를 지움
-        if self.current_tool not in ["pen", "highlight"]:
-            for item in self._temp_items:
-                self.canvas.delete(item)
-            self._temp_items = []
-            
-        x, y = event.x, event.y
-        sx, sy = self._sx, self._sy
-        col = self.draw_color
-        # [수정] 미리보기 굵기에 배율을 곱해 실제 저장될 굵기와 일치시킴
-        lw  = max(1, int(self._width_var.get() * self.scale))
-        t   = self.current_tool
-
-        if t in ["pen", "highlight"]:
-            is_shift = self._is_shift_pressed(event)
-            if t == "highlight":
-                # 형광펜은 항상 수평 고정
-                y = sy
-                self._pen_pts = [(sx, sy), (x, y)]
-                self._temp_items.append(self.canvas.create_line(sx, sy, x, y, fill=col, width=lw, capstyle=tk.ROUND))
-            elif is_shift:
-                if abs(x - sx) > abs(y - sy): y = sy
-                else: x = sx
-                self._pen_pts = [(sx, sy), (x, y)]
-                self._temp_items.append(self.canvas.create_line(sx, sy, x, y, fill=col, width=lw, capstyle=tk.ROUND))
-            else:
-                self._pen_pts.append((x, y))
-                pts = self._pen_pts
-                if len(pts) >= 2:
-                    self._temp_items.append(
-                        self.canvas.create_line(*pts[-2], *pts[-1], fill=col, width=lw,
-                                               capstyle=tk.ROUND, joinstyle=tk.ROUND))
-        elif t == "line":
-            self._temp_items.append(self.canvas.create_line(sx,sy,x,y,fill=col,width=lw))
-        elif t == "arrow":
-            self._temp_items.append(self.canvas.create_line(sx,sy,x,y,fill=col,width=lw,
-                                    arrow=tk.LAST, arrowshape=(16,20,6)))
-        elif t == "rect":
-            x0, y0, x1, y1 = self._get_norm_rect(sx, sy, x, y)
-            if self.fill_shape_var.get():
-                fill_c = self.custom_fill_color or col
-                self._temp_items.append(self.canvas.create_rectangle(x0, y0, x1, y1, fill=fill_c, outline=col, width=lw))
-            else:
-                self._temp_items.append(self.canvas.create_rectangle(x0, y0, x1, y1, outline=col, width=lw))
-        elif t == "ellipse":
-            x0, y0, x1, y1 = self._get_norm_rect(sx, sy, x, y)
-            if self.fill_shape_var.get():
-                fill_c = self.custom_fill_color or col
-                self._temp_items.append(self.canvas.create_oval(x0, y0, x1, y1, fill=fill_c, outline=col, width=lw))
-            else:
-                self._temp_items.append(self.canvas.create_oval(x0, y0, x1, y1, outline=col, width=lw))
-        elif t in ("mosaic","crop","text"):
-            x0, y0, x1, y1 = self._get_norm_rect(sx, sy, x, y)
-            self._temp_items.append(self.canvas.create_rectangle(x0, y0, x1, y1,
-                                    outline="#00FF00", width=2, dash=(6,4)))
-
-    def _on_release(self, event):
-        for item in self._temp_items:
-            self.canvas.delete(item)
-        self._temp_items = []
-        x, y   = event.x, event.y
-        sx, sy = self._sx, self._sy
-        ix, iy   = self._c2i(x,  y)
-        isx, isy = self._c2i(sx, sy)
-        t = self.current_tool
-
-        # ── 텍스트: 별도 팝업 처리 ─────────────────
-        if t == "text":
-            self._do_text(isx, isy)
-            return
-
-        # ── 크롭: 이미지 크기 변경 ─────────────────
-        if t == "crop":
-            x0,y0 = min(isx,ix), min(isy,iy)
-            x1,y1 = max(isx,ix), max(isy,iy)
-            iw, ih = self.edit_img.size
-            x0,y0 = max(0,x0), max(0,y0)
-            x1,y1 = min(iw,x1), min(ih,y1)
-            if x1-x0 > 5 and y1-y0 > 5:
-                self._push_undo()
-                self.edit_img = self.edit_img.crop((x0,y0,x1,y1))
-                self._fit_and_refresh()
-            return
-
-        # ── 나머지 도구: PIL에 그리기 ──────────────
-        self._push_undo()
-        draw = ImageDraw.Draw(self.edit_img)
-        r,g,b = self._hex2rgb(self.draw_color)
-        col_rgba = (r,g,b,255)
-        lw = self.line_width
-
-        if t == "pen":
-            if self._is_shift_pressed(event):
-                if abs(x - sx) > abs(y - sy): y = sy
-                else: x = sx
-                self._pen_pts = [(sx, sy), (x, y)]
-            
-            pts = [self._c2i(px,py) for px,py in self._pen_pts]
-            if len(pts) >= 2:
-                draw.line(pts, fill=col_rgba, width=lw, joint="curve")
-            elif len(pts) == 1:
-                r2 = max(1, lw//2)
-                px,py = pts[0]
-                draw.ellipse([px-r2,py-r2,px+r2,py+r2], fill=col_rgba)
-
-        elif t == "line":
-            draw.line([isx,isy,ix,iy], fill=col_rgba, width=lw)
-
-        elif t == "arrow":
-            self._draw_arrow(draw, isx,isy,ix,iy, col_rgba, lw)
-
-        elif t in ["rect", "ellipse"]:
-            x0, y0, x1, y1 = self._get_norm_rect(isx, isy, ix, iy)
-            is_fill = self.fill_shape_var.get()
-            fill_rgb = self._hex2rgb(self.custom_fill_color or self.draw_color) if is_fill else None
-            
-            if t == "rect":
-                if is_fill: draw.rectangle([x0, y0, x1, y1], fill=(*fill_rgb, 255), outline=col_rgba, width=lw)
-                else: draw.rectangle([x0, y0, x1, y1], outline=col_rgba, width=lw)
-            else:
-                if is_fill: draw.ellipse([x0, y0, x1, y1], fill=(*fill_rgb, 255), outline=col_rgba, width=lw)
-                else: draw.ellipse([x0, y0, x1, y1], outline=col_rgba, width=lw)
-
-        elif t == "highlight":
-            y = sy # 수평 고정
-            pts = [self._c2i(px, py) for px, py in [(sx, sy), (x, y)]]
-            
-            overlay = Image.new("RGBA", self.edit_img.size, (0,0,0,0))
-            ov_draw = ImageDraw.Draw(overlay)
-            # 형광펜은 선명도 유지를 위해 블러 반경을 최소화(0.4), 투명도는 20% 수준(50)
-            ov_draw.line(pts, fill=(r,g,b,50), width=lw, joint="round")
-            overlay = overlay.filter(ImageFilter.GaussianBlur(radius=0.4))
-            self.edit_img = Image.alpha_composite(self.edit_img, overlay)
-
-        elif t == "mosaic":
-            x0, y0, x1, y1 = self._get_norm_rect(isx, isy, ix, iy)
-            iw, ih = self.edit_img.size
-            x0, y0 = max(0, x0), max(0, y0)
-            x1, y1 = min(iw, x1), min(ih, y1)
-            if x1 - x0 > 4 and y1 - y0 > 4:
-                region = self.edit_img.crop((x0, y0, x1, y1))
-                small = region.resize((max(1, (x1 - x0) // 10), max(1, (y1 - y0) // 10)), Image.BOX)
-                blurred = small.resize((x1 - x0, y1 - y0), Image.NEAREST)
-                self.edit_img.paste(blurred, (x0, y0))
-
-        self._refresh_canvas()
-
-    # ══════════════════════════════════════════════
-    #  도구 보조 메서드
-    # ══════════════════════════════════════════════
-    def _draw_arrow(self, draw, x1,y1,x2,y2, color, lw):
-        draw.line([x1,y1,x2,y2], fill=color, width=lw)
-        angle = math.atan2(y2-y1, x2-x1)
-        size  = max(12, lw*4)
-        spread = math.pi/6
-        for side in (spread, -spread):
-            ex = x2 - size * math.cos(angle - side)
-            ey = y2 - size * math.sin(angle - side)
-            draw.line([x2,y2,int(ex),int(ey)], fill=color, width=lw)
-
-    def _do_text(self, x, y):
-        text = simpledialog.askstring("텍스트 입력", "입력할 텍스트:", parent=self)
-        if not text:
-            return
-        self._push_undo()
-        draw = ImageDraw.Draw(self.edit_img)
-        font_size = self._fsize_var.get()
-        self.font_size = font_size
-        pil_font = self._get_pil_font(self.font_family, font_size)
-        r,g,b = self._hex2rgb(self.draw_color)
-        draw.text((x, y), text, fill=(r,g,b,255), font=pil_font)
-        self._refresh_canvas()
-
-    def _get_pil_font(self, family, size):
-        font_map = {
-            "Malgun Gothic": "malgun.ttf",
-            "Consolas":      "consola.ttf",
-            "Courier New":   "cour.ttf",
-            "Times New Roman":"times.ttf",
-            "Calibri":       "calibri.ttf",
-        }
-        fname = font_map.get(family, "arial.ttf")
-        path  = os.path.join("C:/Windows/Fonts", fname)
-        try:
-            return ImageFont.truetype(path, size)
-        except Exception:
-            return ImageFont.load_default()
-
-    def _hex2rgb(self, hex_color):
-        hex_color = hex_color.lstrip("#")
-        return tuple(int(hex_color[i:i+2],16) for i in (0,2,4))
-
-    # ══════════════════════════════════════════════
-    #  Undo / Redo
-    # ══════════════════════════════════════════════
-    def _push_undo(self):
-        self.undo_stack.append(self.edit_img.copy())
-        if len(self.undo_stack) > self.MAX_UNDO:
-            self.undo_stack.pop(0)
-        self.redo_stack.clear()
-
-    def undo(self):
-        if self.undo_stack:
-            self.redo_stack.append(self.edit_img.copy())
-            self.edit_img = self.undo_stack.pop()
-            self._fit_and_refresh()
-
-    def redo(self):
-        if self.redo_stack:
-            self.undo_stack.append(self.edit_img.copy())
-            self.edit_img = self.redo_stack.pop()
-            self._fit_and_refresh()
-
-    # ══════════════════════════════════════════════
-    #  변환 (회전/반전)
-    # ══════════════════════════════════════════════
-    def rotate(self, deg):
-        self._push_undo()
-        self.edit_img = self.edit_img.rotate(deg, expand=True)
-        self._fit_and_refresh()
-
-    def flip(self, mode):
-        self._push_undo()
-        if mode == "h":
-            self.edit_img = ImageOps.mirror(self.edit_img)
-        else:
-            self.edit_img = ImageOps.flip(self.edit_img)
-        self._fit_and_refresh()
-
-    # ══════════════════════════════════════════════
-    #  저장 / 클립보드
-    # ══════════════════════════════════════════════
-    def _final_img(self):
-        return self.edit_img.convert("RGB")
-
-    def save(self):
-        img = self._final_img()
-        ext = os.path.splitext(self.filepath)[1].lower()
-        if ext in (".jpg",".jpeg"):
-            img.save(self.filepath, quality=95)
-        else:
-            img.save(self.filepath)
-        self.app.update_thumbnails()
-        self.title(f"편집기 — {os.path.basename(self.filepath)} ✓")
-
-    def save_as(self):
-        ft = [("PNG","*.png"),("JPEG","*.jpg *.jpeg"),("모든 파일","*.*")]
-        path = filedialog.asksaveasfilename(
-            defaultextension=".png", filetypes=ft,
-            initialdir=os.path.dirname(self.filepath), parent=self)
-        if path:
-            img = self._final_img()
-            ext = os.path.splitext(path)[1].lower()
-            img.save(path, quality=95) if ext in (".jpg",".jpeg") else img.save(path)
-            self.filepath = path
-            self.title(f"편집기 — {os.path.basename(path)} ✓")
-
-    def copy_to_clipboard(self):
-        self.app.copy_image_to_clipboard(self._final_img())
 
 class MainApp:
     def __init__(self, license_data=None):
@@ -1526,8 +1030,7 @@ class MainApp:
         ov.bind("<Escape>", _on_esc_ov)
         ov.deiconify() # 준비 완료 후 표시
         ov.focus_force()
-        rd = {"id": None, "tid": None, "tbg": None, "x": 0, "y": 0, "vline": None, "hline": None, "clear_img": None, "last_render": 0}
-        rd["clear_img"] = cv.create_image(0, 0, anchor="nw")
+        rd = {"id": None, "tid": None, "tbg": None, "x": 0, "y": 0, "vline": None, "hline": None, "last_render": 0}
         
         cv.create_rectangle(self.sw // 2 - 320, 15, self.sw // 2 + 320, 45, fill="#1e1e1e", outline="")
         cv.create_text(self.sw // 2, 30, text="[Shift] 비율 고정    [Ctrl] 중앙 기준 드래그    [Ctrl+Shift] 중앙 기준+비율 고정    [ESC] 취소", fill="#f1c40f", font=("Malgun Gothic", 10, "bold"), anchor="center")
@@ -1583,7 +1086,7 @@ class MainApp:
         def on_m(e):
             x1, y1, x2, y2 = get_rect(e)
             
-            # [최적화] 선과 테두리는 즉시 업데이트 (부드러운 마우스 움직임)
+            # [최적화] 선과 테두리 좌표만 즉시 업데이트 (이미지 연산을 제거하여 100% 부드러움 확보)
             cv.coords(rd["id"], x1, y1, x2, y2)
             cv.coords(rd["vline"], e.x, 0, e.x, self.sh)
             cv.coords(rd["hline"], 0, e.y, self.sw, e.y)
@@ -1591,21 +1094,11 @@ class MainApp:
             w, h = int(abs(x2 - x1)), int(abs(y2 - y1))
             tx, ty = min(x1, x2), min(y1, y2) - 5
             
-            # [최적화] 이미지 크롭 및 텍스트 업데이트는 쓰로틀링 적용 (약 30fps)
-            now = time.time()
-            if now - rd["last_render"] > 0.03: 
-                cv.itemconfig(rd["tid"], text=f" {w} x {h} ")
-                b = cv.bbox(rd["tid"])
-                cv.coords(rd["tbg"], b[0]-2, b[1]-2, b[2]+2, b[3]+2)
-                cv.coords(rd["tid"], tx, ty)
-                
-                if w > 0 and h > 0:
-                    cx_min, cy_min = min(x1, x2), min(y1, y2)
-                    cropped = screen_img.crop((cx_min, cy_min, cx_min + w, cy_min + h))
-                    ov.active_photo = ImageTk.PhotoImage(cropped)
-                    cv.itemconfig(rd["clear_img"], image=ov.active_photo)
-                    cv.coords(rd["clear_img"], cx_min, cy_min)
-                rd["last_render"] = now
+            # 텍스트 정보 업데이트 (최소한의 오버헤드)
+            cv.itemconfig(rd["tid"], text=f" {w} x {h} ")
+            b = cv.bbox(rd["tid"])
+            cv.coords(rd["tbg"], b[0]-2, b[1]-2, b[2]+2, b[3]+2)
+            cv.coords(rd["tid"], tx, ty)
 
         def on_r(e):
             x1, y1, x2, y2 = get_rect(e)
@@ -1627,9 +1120,23 @@ class MainApp:
         self.show_window()
 
     def on_thumbnail_dblclick(self, filepath):
-        """썸네일 더블클릭 시 이미지 편집기 오픈"""
+        """썸네일 더블클릭 시 이미지 편집기 프로세스로 오픈"""
         if os.path.exists(filepath):
-            ImageEditor(self.root, filepath, self)
+            try:
+                # [수정] 멀티 엔진(One File) 방식: 자기 자신(sys.executable)을 --editor 인자와 함께 실행
+                if getattr(sys, 'frozen', False):
+                    # EXE 실행 환경
+                    subprocess.Popen([sys.executable, "--editor", filepath])
+                else:
+                    # 스크립트 실행 환경
+                    subprocess.Popen([sys.executable, sys.argv[0], "--editor", filepath])
+                
+                # 편집기가 종료된 후 목록을 새로고침하고 싶다면 
+                # .wait()를 쓸 수 없으므로(메인 UI가 멈춤) 별도 스레드에서 감시하거나 
+                # 단순히 일정 시간 후 또는 창이 포커스를 얻을 때 갱신하도록 구성 가능
+                self.root.after(2000, self.update_thumbnails) # 2초 후 가볍게 갱신 시도
+            except Exception as e:
+                messagebox.showerror("오류", f"편집기를 실행할 수 없습니다: {e}")
 
     def _show_thumbnail_menu(self, event, filepath):
         menu = tk.Menu(self.root, tearoff=0)
@@ -1735,38 +1242,5 @@ class MainApp:
                 try: shutil.copy2(fp, os.path.join(d, os.path.basename(fp)))
                 except Exception: pass
 
-def enforce_single_instance():
-    mutex_name = "Global\\DSCapture_Unique_Instance_Mutex"
-    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
-    if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
-        return False, None
-    return True, mutex
-
-def focus_existing_window():
-    """이미 실행 중인 DS Capture 창을 찾아 활성화함"""
-    def callback(hwnd, extra):
-        title = ctypes.create_unicode_buffer(256)
-        ctypes.windll.user32.GetWindowTextW(hwnd, title, 256)
-        if title.value.startswith("DS Capture"):
-            # SW_RESTORE(9)로 최소화 해제 후 앞으로 가져오기
-            ctypes.windll.user32.ShowWindow(hwnd, 9)
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
-            return False # 찾았으므로 중단
-        return True
-
-    enum_windows_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-    # 콜백 함수가 가비지 컬렉션되지 않도록 변수에 할당 후 사용
-    cb_ptr = enum_windows_proc(callback)
-    ctypes.windll.user32.EnumWindows(cb_ptr, 0)
-
 if __name__ == "__main__":
-    is_unique, mutex = enforce_single_instance()
-    if not is_unique:
-        focus_existing_window()
-        sys.exit(0)
-        
-    # 라이센스 체크 (프로그램명: DS_CAPTURE)
-    is_valid, lic_data = check_license("DS_CAPTURE")
-    if is_valid:
-        app = MainApp(lic_data)
-        app.root.mainloop()
+    main_entry()
