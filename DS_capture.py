@@ -17,6 +17,9 @@ from PIL import ImageGrab, Image, ImageDraw, ImageTk, ImageOps, ImageFont, Image
 import keyboard
 import pystray
 from pystray import MenuItem as item
+import win32gui
+import win32com.client
+import pythoncom
 
 # --- [시작 프로그램 실행 경로 문제 해결] ---
 # 실행 파일 경로로 작업 디렉토리 변경 (license.lic 파일을 찾지 못하는 문제 방지)
@@ -63,20 +66,11 @@ kernel32.GlobalUnlock.restype = wintypes.BOOL
 
 def get_base_dir():
     """실행 파일(EXE)이 위치한 실제 폴더 경로를 반환"""
-    # 1. PyInstaller/Nuitka 등 패키징 환경 확인
     if getattr(sys, 'frozen', False):
-        # 2. Nuitka 전용 환경 변수 확인
-        for env_var in ['NUITKA_ONEFILE_DIRECTORY', 'NUITKA_PACKAGE_HOME']:
-            val = os.environ.get(env_var)
-            if val and os.path.exists(val):
-                return os.path.abspath(val) if os.path.isdir(val) else os.path.dirname(os.path.abspath(val))
-        
-        # 3. PyInstaller 및 일반적인 EXE 실행 경로 (가장 확실함)
-        # sys.executable은 언제나 실제 EXE의 위치를 가리킵니다.
-        exe_path = os.path.abspath(sys.executable)
-        return os.path.dirname(exe_path)
+        # PyInstaller 및 일반적인 EXE 실행 경로
+        return os.path.dirname(os.path.abspath(sys.executable))
     
-    # 4. 스크립트 실행 환경
+    # 스크립트 실행 환경
     return os.path.dirname(os.path.abspath(__file__))
 
 BASE_DIR = get_base_dir()
@@ -1235,6 +1229,11 @@ class MainApp:
                 elif mode == "drag": keyboard.add_hotkey(hk_str, self.start_drag)
                 elif mode == "full": keyboard.add_hotkey(hk_str, self.full_capture)
             except: pass
+            
+        # [신규] 탐색기 이미지 붙여넣기 (Ctrl+V) 등록
+        try:
+            keyboard.add_hotkey('ctrl+v', self.handle_explorer_paste, suppress=False)
+        except: pass
 
     # --- 기존 기능들 수정 (저장 로직 포함) ---
     def set_format(self, fmt):
@@ -1397,6 +1396,59 @@ class MainApp:
     def open_save_folder(self, icon=None, item=None):
         try: os.startfile(self.save_dir)
         except: pass
+
+    # --- [신규] 탐색기 이미지 붙여넣기 기능 ---
+    def get_active_explorer_path(self):
+        """현재 활성화된 윈도우 탐색기 또는 바탕화면의 경로를 반환합니다."""
+        # COM 초기화 (멀티스레드 환경 대응)
+        pythoncom.CoInitialize()
+        try:
+            hwnd = win32gui.GetForegroundWindow()
+            if not hwnd: return None
+            
+            # 탐색기 창 확인
+            shell = win32com.client.Dispatch("Shell.Application")
+            for window in shell.Windows():
+                if window.HWND == hwnd:
+                    # 일반 탐색기 폴더 경로
+                    return window.Document.Folder.Self.Path
+            
+            # 바탕화면 확인 (Progman 또는 WorkerW 클래스)
+            class_name = win32gui.GetClassName(hwnd)
+            if class_name in ["Progman", "WorkerW"]:
+                return os.path.join(os.environ["USERPROFILE"], "Desktop")
+                
+        except Exception:
+            pass
+        finally:
+            pythoncom.CoUninitialize()
+        return None
+
+    def generate_filename(self):
+        """현재 시간과 설정된 포맷을 바탕으로 파일명을 생성합니다."""
+        time_str = time.strftime('%Y%m%d_%H%M%S')
+        return f"{time_str}_capture.{self.save_format}"
+
+    def handle_explorer_paste(self):
+        """Ctrl+V 발생 시 탐색기 창이면 클립보드 이미지를 저장합니다."""
+        target_path = self.get_active_explorer_path()
+        if not target_path:
+            return
+
+        # 클립보드에서 이미지 가져오기
+        try:
+            img = ImageGrab.grabclipboard()
+            if isinstance(img, Image.Image):
+                filename = self.generate_filename()
+                filepath = os.path.join(target_path, filename)
+                
+                if self.save_format == "jpg":
+                    img.convert("RGB").save(filepath, quality=95)
+                else:
+                    img.save(filepath)
+                
+        except Exception:
+            pass
 
     def on_close_window(self):
         if getattr(self, 'close_action', 'tray') == 'exit':
@@ -1644,8 +1696,7 @@ class MainApp:
     def execute_capture(self, x1, y1, x2, y2):
         l, t, r, b = min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
         if r - l < 5 or b - t < 5: return
-        time_str = time.strftime('%Y-%m-%d_%H%M%S')
-        filename = f"{time_str}_capture.{self.save_format}"
+        filename = self.generate_filename()
         filepath = os.path.join(self.save_dir, filename)
         try:
             img = ImageGrab.grab(bbox=(l, t, r, b), all_screens=True)
