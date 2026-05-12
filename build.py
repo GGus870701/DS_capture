@@ -95,9 +95,9 @@ def main():
     ]
     
     if is_test:
-        # 테스트 빌드: 단일 파일, 콘솔 창 표시
-        cmd.extend(["--onefile", "--console"])
-        dist_path = os.path.join(test_dir, "DS Capture.exe")
+        # 테스트 빌드: 폴더 형태(속도 빠름), 콘솔 창 표시
+        cmd.extend(["--onedir", "--console"])
+        dist_path = os.path.join(target_dir, "DS Capture", "DS Capture.exe")
     else:
         # 배포 빌드: 단일 파일, 콘솔 창 숨김
         cmd.extend(["--onefile", "--windowed"])
@@ -105,8 +105,8 @@ def main():
 
     # 공통 옵션
     cmd.extend([
-        "--icon=DS_capture.ico",
-        "--add-data=DS_capture.ico;.",  # 아이콘 파일 포함
+        "--icon=icon/DS_capture.ico",
+        "--add-data=icon/DS_capture.ico;icon",  # 아이콘 폴더 포함
         f"--name=DS Capture",
         f"--distpath={target_dir}",
         py_file

@@ -50,7 +50,7 @@ def get_resource_path(relative_path):
 
 def set_window_icon(window):
     try:
-        ico_path = get_resource_path("DS_capture.ico")
+        ico_path = get_resource_path("icon/DS_capture.ico")
         if os.path.exists(ico_path):
             window.iconbitmap(ico_path)
     except:
