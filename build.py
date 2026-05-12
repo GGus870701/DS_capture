@@ -6,7 +6,7 @@ import datetime
 import shutil
 
 def main():
-    py_file = 'DS Capture.py'
+    py_file = 'DS_capture.py'
     output_dir = 'dist_production'
     test_dir = 'dist_test'
     
@@ -14,6 +14,36 @@ def main():
     if not os.path.exists(py_file):
         print(f"Error: {py_file} 파일을 찾을 수 없습니다.")
         return
+
+    # [신규] 환경 정보 동기화 (Agents.md 업데이트)
+    agents_file = 'Agents.md'
+    current_python = sys.executable
+    current_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    
+    if os.path.exists(agents_file):
+        try:
+            with open(agents_file, 'r', encoding='utf-8') as f:
+                agents_content = f.read()
+            
+            saved_path_match = re.search(r'- \*\*Python Path\*\*: `(.*?)`', agents_content)
+            saved_ver_match = re.search(r'- \*\*Python Version\*\*: ([\d\.]+)', agents_content)
+            
+            saved_path = saved_path_match.group(1) if saved_path_match else ""
+            saved_ver = saved_ver_match.group(1) if saved_ver_match else ""
+            
+            if current_python != saved_path or (saved_ver and not current_version.startswith(saved_ver)):
+                print(f"환경 변화 감지: Agents.md를 업데이트합니다.")
+                new_agents_content = agents_content
+                if saved_path_match:
+                    new_agents_content = new_agents_content.replace(f"- **Python Path**: `{saved_path}`", f"- **Python Path**: `{current_python}`")
+                if saved_ver_match:
+                    new_agents_content = new_agents_content.replace(f"- **Python Version**: {saved_ver}", f"- **Python Version**: {current_version}")
+                
+                with open(agents_file, 'w', encoding='utf-8') as f:
+                    f.write(new_agents_content)
+                print("Agents.md 동기화 완료.")
+        except Exception as e:
+            print(f"Agents.md 동기화 실패: {e}")
 
     # 2. 버전 정보 및 빌드 정보 업데이트
     with open(py_file, 'r', encoding='utf-8') as f:
@@ -76,6 +106,7 @@ def main():
     # 공통 옵션
     cmd.extend([
         "--icon=DS_capture.ico",
+        "--add-data=DS_capture.ico;.",  # 아이콘 파일을 EXE 내부에 포함 (런타임용)
         f"--name=DS Capture",
         f"--distpath={target_dir}",
         py_file

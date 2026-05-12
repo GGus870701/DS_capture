@@ -13,7 +13,7 @@ import winreg
 import hmac
 import hashlib
 import subprocess
-from PIL import ImageGrab, Image, ImageDraw, ImageTk, ImageOps, ImageFont, ImageEnhance
+from PIL import ImageGrab, Image, ImageDraw, ImageTk, ImageOps, ImageFont, ImageEnhance, ImageFilter
 import keyboard
 import pystray
 from pystray import MenuItem as item
@@ -86,18 +86,27 @@ LICENSE_DIR = os.path.join(BASE_DIR, "license")
 LICENSE_FILE = os.path.join(BASE_DIR, "license.lic")
 
 # --- [빌드 정보] ---
-BUILD_VERSION = "1.00.15"
+BUILD_VERSION = "1.00.22"
 BUILD_DATE = "2026-05-11"
-BUILD_TIME = "14:29:02"
+BUILD_TIME = "15:57:48"
 
 def get_resource_path(relative_path):
-    """ 리소스 절대 경로 반환 """
+    """ 리소스 절대 경로 반환 (PyInstaller 지원) """
     if getattr(sys, 'frozen', False):
-        base_path = BASE_DIR
+        # PyInstaller _MEIPASS 임시 폴더 확인
+        base_path = getattr(sys, '_MEIPASS', BASE_DIR)
     else:
-        # 스크립트 실행 시 현재 파일의 위치 기준
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+def set_window_icon(window):
+    """모든 Toplevel/Tk 창에 아이콘 일괄 적용"""
+    try:
+        ico_path = get_resource_path("DS_capture.ico")
+        if os.path.exists(ico_path):
+            window.iconbitmap(ico_path)
+    except:
+        pass
 
 def get_hwid():
     """기기 고유 정보를 조합하여 해싱된 HWID 생성"""
@@ -219,14 +228,7 @@ def show_license_error(hwid, message):
     
     err_win = tk.Toplevel(root)
     err_win.title("라이센스 인증 필요")
-    
-    # [수정] 서브 윈도우 아이콘 명시적 지정
-    try:
-        ico_path = get_resource_path("DS_capture.ico")
-        if os.path.exists(ico_path):
-            err_win.iconbitmap(ico_path)
-    except:
-        pass
+    set_window_icon(err_win)
     
     win_w, win_h = 450, 270
     sw, sh = err_win.winfo_screenwidth(), err_win.winfo_screenheight()
@@ -253,6 +255,7 @@ def show_license_error(hwid, message):
     tk.Label(err_win, text="관리자에게 문의하세요.", bg="#1e272e", fg="#a4b0be", 
              font=("Malgun Gothic", 9)).pack(side=tk.BOTTOM, pady=10)
              
+    err_win.bind("<Escape>", lambda e: sys.exit(0))
     err_win.protocol("WM_DELETE_WINDOW", lambda: sys.exit(0))
     root.mainloop()
 # -------------------------------------------
@@ -262,6 +265,7 @@ class ResizableBox(tk.Toplevel):
     def __init__(self, parent, width, height, on_capture):
         super().__init__(parent)
         self.on_capture = on_capture
+        set_window_icon(self) # 아이콘 설정 추가
         self.top_bar_h = 40    
         self.sw, self.sh = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"{width}x{height + self.top_bar_h}+200+200")
@@ -280,7 +284,7 @@ class ResizableBox(tk.Toplevel):
         self.info_label.pack(side=tk.LEFT, padx=15)
 
         self.close_btn = tk.Button(self.top_frame, text=" ✕ ", bg='#1e1e1e', fg='#f1c40f', 
-                                   command=self.close_box, bd=0, font=("Arial", 14, "bold"), 
+                                   command=self.close_box, bd=0, font=("Malgun Gothic", 14, "bold"), 
                                    activebackground='#e81123', cursor="hand2")
         self.close_btn.pack(side=tk.RIGHT, fill=tk.Y)
         
@@ -307,9 +311,10 @@ class ResizableBox(tk.Toplevel):
         self.catcher.bind("<Button-1>", self.start_resize)
         self.catcher.bind("<B1-Motion>", self.do_resize)
         self.catcher.bind("<Motion>", self.update_cursor)
-        self.bind("<Escape>", lambda e: self.close_box())
+        self.bind("<Escape>", lambda e: self._on_esc_box())
         self.bind("<Return>", lambda e: self.trigger_capture())
         self.catcher.bind("<Return>", lambda e: self.trigger_capture())
+        self.catcher.bind("<Escape>", lambda e: self._on_esc_box())
         self.bind("<Configure>", self.sync_ui)
         
         self.is_capturing = False # 연속 캡처 방지 및 상태 관리
@@ -320,6 +325,10 @@ class ResizableBox(tk.Toplevel):
         self.master.deiconify()
         # self.master.attributes("-topmost", True)  <-- 이 부분을 제거하여 메인 창이 다시 topmost가 되지 않게 함
         self.destroy()
+
+    def _on_esc_box(self):
+        self.close_box()
+        return "break"
 
     def sync_ui(self, event=None):
         w, h = self.winfo_width(), self.winfo_height() - self.top_bar_h
@@ -444,18 +453,12 @@ class ImageEditor(tk.Toplevel):
 
     def __init__(self, parent, filepath, app):
         super().__init__(parent)
+        self.withdraw() # 깜빡임 방지
         self.filepath = filepath
         self.app = app          # MainApp 참조
         self.attributes("-topmost", False)
         self.title(f"편집기 — {os.path.basename(filepath)}")
-        
-        # [수정] 서브 윈도우 아이콘 명시적 지정
-        try:
-            ico_path = get_resource_path("DS_capture.ico")
-            if os.path.exists(ico_path):
-                self.iconbitmap(ico_path)
-        except:
-            pass
+        set_window_icon(self)
 
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         target_w = int(sw * 0.75)
@@ -486,11 +489,18 @@ class ImageEditor(tk.Toplevel):
         self.scale       = 1.0
         self._tk_img     = None
         self._tool_btns  = {}
+        
+        # [신규] 도구 전환 시 상태 복구를 위한 변수
+        self.prev_lw = self.line_width
+        self.prev_color = self.draw_color
 
         self._build_ui()
         self.after(50, self._fit_and_refresh)
         self._bind_events()
         self.protocol("WM_DELETE_WINDOW", self.destroy)
+        
+        self.deiconify() # 준비 완료 후 표시
+        self.focus_force()
 
     # ══════════════════════════════════════════════
     #  UI 구성
@@ -520,7 +530,7 @@ class ImageEditor(tk.Toplevel):
         tk.Button(row1, text="↔ 좌우반전",     command=lambda: self.flip("h"), **bs).pack(side=tk.LEFT, padx=2)
         tk.Button(row1, text="↕ 상하반전",     command=lambda: self.flip("v"), **bs).pack(side=tk.LEFT, padx=2)
         
-        self._size_lbl = tk.Label(row1, text="", bg="#1e272e", fg="#00d8d6", font=("Arial", 10, "bold"))
+        self._size_lbl = tk.Label(row1, text="", bg="#1e272e", fg="#00d8d6", font=("Malgun Gothic", 10, "bold"))
         self._size_lbl.pack(side=tk.RIGHT, padx=10)
 
         # 2행: 도구 선택
@@ -547,13 +557,16 @@ class ImageEditor(tk.Toplevel):
         row3 = tk.Frame(top_area, bg="#1e272e", pady=10, padx=12)
         row3.pack(fill=tk.X)
         
+        def create_palette(parent, callback):
+            for c in self.PALETTE:
+                tk.Button(parent, bg=c, width=2, height=1, bd=1, relief="solid", cursor="hand2", 
+                          command=lambda col=c: callback(col)).pack(side=tk.LEFT, padx=2)
+            tk.Button(parent, text="⊕", bg="#485460", fg="white", bd=0, cursor="hand2", font=("Malgun Gothic",10, "bold"), 
+                      command=self._pick_color if callback == self._set_color else self._pick_fill_color, padx=8).pack(side=tk.LEFT, padx=5)
+
         # 1. 선 색상 영역
         tk.Label(row3, text="선 색상:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
-        for c in self.PALETTE:
-            tk.Button(row3, bg=c, width=2, height=1, bd=1, relief="solid", cursor="hand2", 
-                      command=lambda col=c: self._set_color(col)).pack(side=tk.LEFT, padx=2)
-        tk.Button(row3, text="⊕", bg="#485460", fg="white", bd=0, cursor="hand2", font=("Arial",10, "bold"), 
-                  command=self._pick_color, padx=8).pack(side=tk.LEFT, padx=5)
+        create_palette(row3, self._set_color)
         self._color_ind = tk.Label(row3, bg=self.draw_color, width=3, height=1, relief="solid", bd=1)
         self._color_ind.pack(side=tk.LEFT, padx=3)
 
@@ -562,7 +575,7 @@ class ImageEditor(tk.Toplevel):
         # 2. 선 두께 영역
         tk.Label(row3, text="선 두께:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
         self._width_var = tk.IntVar(value=self.line_width)
-        tk.Spinbox(row3, from_=1, to=100, textvariable=self._width_var, width=4, font=("Arial", 10), 
+        tk.Spinbox(row3, from_=1, to=100, textvariable=self._width_var, width=4, font=("Malgun Gothic", 10), 
                    command=lambda: setattr(self,"line_width",self._width_var.get())).pack(side=tk.LEFT)
                    
         tk.Frame(row3, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
@@ -571,11 +584,7 @@ class ImageEditor(tk.Toplevel):
         tk.Checkbutton(row3, text="채우기", variable=self.fill_shape_var, bg="#1e272e", fg="#d2dae2", 
                        selectcolor="#2f3640", activebackground="#1e272e", activeforeground="white",
                        font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(5,6))
-        for c in self.PALETTE:
-            tk.Button(row3, bg=c, width=2, height=1, bd=1, relief="solid", cursor="hand2", 
-                      command=lambda col=c: self._set_fill_color(col)).pack(side=tk.LEFT, padx=2)
-        tk.Button(row3, text="⊕", bg="#485460", fg="white", bd=0, cursor="hand2", font=("Arial",10, "bold"), 
-                  command=self._pick_fill_color, padx=8).pack(side=tk.LEFT, padx=5)
+        create_palette(row3, self._set_fill_color)
         self._fill_color_ind = tk.Label(row3, bg=self.custom_fill_color, width=3, height=1, relief="solid", bd=1)
         self._fill_color_ind.pack(side=tk.LEFT, padx=3)
 
@@ -584,12 +593,12 @@ class ImageEditor(tk.Toplevel):
         # 4. 글꼴 영역
         tk.Label(row3, text="글꼴:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
         self._font_var = tk.StringVar(value=self.font_family)
-        ttk.Combobox(row3, textvariable=self._font_var, values=["Malgun Gothic", "Arial", "Consolas", "Impact"], state="readonly", width=10, font=("Arial", 9)).pack(side=tk.LEFT, padx=2)
+        ttk.Combobox(row3, textvariable=self._font_var, values=["Malgun Gothic", "Consolas", "Impact"], state="readonly", width=10, font=("Malgun Gothic", 9)).pack(side=tk.LEFT, padx=2)
         self._font_var.trace_add("write", lambda *a: setattr(self,"font_family",self._font_var.get()))
 
         tk.Label(row3, text="크기:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(8,4))
         self._fsize_var = tk.IntVar(value=self.font_size)
-        tk.Spinbox(row3, from_=8, to=120, textvariable=self._fsize_var, width=3, font=("Arial", 10), 
+        tk.Spinbox(row3, from_=8, to=120, textvariable=self._fsize_var, width=3, font=("Malgun Gothic", 10), 
                    command=lambda: setattr(self,"font_size",self._fsize_var.get())).pack(side=tk.LEFT)
 
         # ── 캔버스 영역 ─────────────────────────────
@@ -600,9 +609,28 @@ class ImageEditor(tk.Toplevel):
     #  도구 선택 / 색상
     # ══════════════════════════════════════════════
     def _select_tool(self, name):
+        prev_t = self.current_tool
         self.current_tool = name
         for n, b in self._tool_btns.items():
             b.config(bg="#0fbcf9" if n == name else "#718093")
+        
+        # 1. 형광펜으로 들어갈 때: 현재 설정을 저장하고 형광펜 전용 설정 적용
+        if name == "highlight":
+            if prev_t != "highlight":
+                self.prev_lw = self.line_width
+                self.prev_color = self.draw_color
+            
+            self.draw_color = "#FFFF00"
+            self.line_width = 25
+            self._color_ind.config(bg=self.draw_color)
+            self._width_var.set(25)
+            
+        # 2. 형광펜에서 나갈 때: 저장했던 이전 설정을 복구
+        elif prev_t == "highlight":
+            self.line_width = self.prev_lw
+            self.draw_color = self.prev_color
+            self._color_ind.config(bg=self.draw_color)
+            self._width_var.set(self.line_width)
 
     def _set_color(self, color):
         self.draw_color = color
@@ -652,6 +680,14 @@ class ImageEditor(tk.Toplevel):
         """캔버스 → 이미지 좌표"""
         return int(cx / self.scale), int(cy / self.scale)
 
+    def _get_norm_rect(self, x1, y1, x2, y2):
+        """정규화된 (x0, y0, x1, y1) 반환"""
+        return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
+
+    def _is_shift_pressed(self, event):
+        """Shift 키 눌림 여부 판정 (Tkinter + Windows API)"""
+        return (event.state & 0x0001) or (ctypes.windll.user32.GetKeyState(0x10) & 0x8000)
+
     # ══════════════════════════════════════════════
     #  이벤트 바인딩
     # ══════════════════════════════════════════════
@@ -663,7 +699,12 @@ class ImageEditor(tk.Toplevel):
         self.bind("<Control-Z>",               lambda e: self.undo())
         self.bind("<Control-y>",               lambda e: self.redo())
         self.bind("<Control-Y>",               lambda e: self.redo())
+        self.bind("<Escape>",                  lambda e: self._esc_close())
         self.bind("<Configure>",               self._on_configure)
+
+    def _esc_close(self):
+        self.destroy()
+        return "break"
 
     def _on_configure(self, event):
         if event.widget == self:
@@ -679,19 +720,27 @@ class ImageEditor(tk.Toplevel):
         self._temp_items = []
 
     def _on_drag(self, event):
-        for item in self._temp_items:
-            self.canvas.delete(item)
-        self._temp_items = []
+        # 사각형, 원, 직선 등 고무줄 형태의 도구만 기존 가이드를 지움
+        if self.current_tool not in ["pen", "highlight"]:
+            for item in self._temp_items:
+                self.canvas.delete(item)
+            self._temp_items = []
+            
         x, y = event.x, event.y
         sx, sy = self._sx, self._sy
         col = self.draw_color
-        lw  = self._width_var.get()
+        # [수정] 미리보기 굵기에 배율을 곱해 실제 저장될 굵기와 일치시킴
+        lw  = max(1, int(self._width_var.get() * self.scale))
         t   = self.current_tool
 
-        if t == "pen":
-            # [수정] 더 강력한 Shift 키 판정 (Tkinter state + Windows API)
-            is_shift = (event.state & 0x0001) or (ctypes.windll.user32.GetKeyState(0x10) & 0x8000)
-            if is_shift:
+        if t in ["pen", "highlight"]:
+            is_shift = self._is_shift_pressed(event)
+            if t == "highlight":
+                # 형광펜은 항상 수평 고정
+                y = sy
+                self._pen_pts = [(sx, sy), (x, y)]
+                self._temp_items.append(self.canvas.create_line(sx, sy, x, y, fill=col, width=lw, capstyle=tk.ROUND))
+            elif is_shift:
                 if abs(x - sx) > abs(y - sy): y = sy
                 else: x = sx
                 self._pen_pts = [(sx, sy), (x, y)]
@@ -709,22 +758,22 @@ class ImageEditor(tk.Toplevel):
             self._temp_items.append(self.canvas.create_line(sx,sy,x,y,fill=col,width=lw,
                                     arrow=tk.LAST, arrowshape=(16,20,6)))
         elif t == "rect":
+            x0, y0, x1, y1 = self._get_norm_rect(sx, sy, x, y)
             if self.fill_shape_var.get():
                 fill_c = self.custom_fill_color or col
-                self._temp_items.append(self.canvas.create_rectangle(sx,sy,x,y,fill=fill_c,outline=col,width=lw))
+                self._temp_items.append(self.canvas.create_rectangle(x0, y0, x1, y1, fill=fill_c, outline=col, width=lw))
             else:
-                self._temp_items.append(self.canvas.create_rectangle(sx,sy,x,y,outline=col,width=lw))
+                self._temp_items.append(self.canvas.create_rectangle(x0, y0, x1, y1, outline=col, width=lw))
         elif t == "ellipse":
+            x0, y0, x1, y1 = self._get_norm_rect(sx, sy, x, y)
             if self.fill_shape_var.get():
                 fill_c = self.custom_fill_color or col
-                self._temp_items.append(self.canvas.create_oval(sx,sy,x,y,fill=fill_c,outline=col,width=lw))
+                self._temp_items.append(self.canvas.create_oval(x0, y0, x1, y1, fill=fill_c, outline=col, width=lw))
             else:
-                self._temp_items.append(self.canvas.create_oval(sx,sy,x,y,outline=col,width=lw))
-        elif t == "highlight":
-            self._temp_items.append(self.canvas.create_rectangle(sx,sy,x,y,
-                                    fill=col, outline="", stipple="gray50"))
+                self._temp_items.append(self.canvas.create_oval(x0, y0, x1, y1, outline=col, width=lw))
         elif t in ("mosaic","crop","text"):
-            self._temp_items.append(self.canvas.create_rectangle(sx,sy,x,y,
+            x0, y0, x1, y1 = self._get_norm_rect(sx, sy, x, y)
+            self._temp_items.append(self.canvas.create_rectangle(x0, y0, x1, y1,
                                     outline="#00FF00", width=2, dash=(6,4)))
 
     def _on_release(self, event):
@@ -763,9 +812,7 @@ class ImageEditor(tk.Toplevel):
         lw = self.line_width
 
         if t == "pen":
-            # [수정] 마지막 릴리즈 시점에도 동일한 Shift 판정 적용
-            is_shift = (event.state & 0x0001) or (ctypes.windll.user32.GetKeyState(0x10) & 0x8000)
-            if is_shift:
+            if self._is_shift_pressed(event):
                 if abs(x - sx) > abs(y - sy): y = sy
                 else: x = sx
                 self._pen_pts = [(sx, sy), (x, y)]
@@ -784,43 +831,39 @@ class ImageEditor(tk.Toplevel):
         elif t == "arrow":
             self._draw_arrow(draw, isx,isy,ix,iy, col_rgba, lw)
 
-        elif t == "rect":
-            x0,y0 = min(isx,ix),min(isy,iy)
-            x1,y1 = max(isx,ix),max(isy,iy)
-            if self.fill_shape_var.get():
-                fill_rgb = self._hex2rgb(self.custom_fill_color or self.draw_color)
-                draw.rectangle([x0,y0,x1,y1], fill=(*fill_rgb, 255), outline=col_rgba, width=lw)
+        elif t in ["rect", "ellipse"]:
+            x0, y0, x1, y1 = self._get_norm_rect(isx, isy, ix, iy)
+            is_fill = self.fill_shape_var.get()
+            fill_rgb = self._hex2rgb(self.custom_fill_color or self.draw_color) if is_fill else None
+            
+            if t == "rect":
+                if is_fill: draw.rectangle([x0, y0, x1, y1], fill=(*fill_rgb, 255), outline=col_rgba, width=lw)
+                else: draw.rectangle([x0, y0, x1, y1], outline=col_rgba, width=lw)
             else:
-                draw.rectangle([x0,y0,x1,y1], outline=col_rgba, width=lw)
-
-        elif t == "ellipse":
-            x0,y0 = min(isx,ix),min(isy,iy)
-            x1,y1 = max(isx,ix),max(isy,iy)
-            if self.fill_shape_var.get():
-                fill_rgb = self._hex2rgb(self.custom_fill_color or self.draw_color)
-                draw.ellipse([x0,y0,x1,y1], fill=(*fill_rgb, 255), outline=col_rgba, width=lw)
-            else:
-                draw.ellipse([x0,y0,x1,y1], outline=col_rgba, width=lw)
+                if is_fill: draw.ellipse([x0, y0, x1, y1], fill=(*fill_rgb, 255), outline=col_rgba, width=lw)
+                else: draw.ellipse([x0, y0, x1, y1], outline=col_rgba, width=lw)
 
         elif t == "highlight":
-            x0,y0 = min(isx,ix),min(isy,iy)
-            x1,y1 = max(isx,ix),max(isy,iy)
+            y = sy # 수평 고정
+            pts = [self._c2i(px, py) for px, py in [(sx, sy), (x, y)]]
+            
             overlay = Image.new("RGBA", self.edit_img.size, (0,0,0,0))
             ov_draw = ImageDraw.Draw(overlay)
-            ov_draw.rectangle([x0,y0,x1,y1], fill=(r,g,b,100))
+            # 형광펜은 선명도 유지를 위해 블러 반경을 최소화(0.4), 투명도는 20% 수준(50)
+            ov_draw.line(pts, fill=(r,g,b,50), width=lw, joint="round")
+            overlay = overlay.filter(ImageFilter.GaussianBlur(radius=0.4))
             self.edit_img = Image.alpha_composite(self.edit_img, overlay)
 
         elif t == "mosaic":
-            x0,y0 = min(isx,ix),min(isy,iy)
-            x1,y1 = max(isx,ix),max(isy,iy)
-            iw,ih = self.edit_img.size
-            x0,y0 = max(0,x0),max(0,y0)
-            x1,y1 = min(iw,x1),min(ih,y1)
-            if x1-x0 > 4 and y1-y0 > 4:
-                region = self.edit_img.crop((x0,y0,x1,y1))
-                small  = region.resize((max(1,(x1-x0)//10), max(1,(y1-y0)//10)), Image.BOX)
-                blurred = small.resize((x1-x0, y1-y0), Image.NEAREST)
-                self.edit_img.paste(blurred, (x0,y0))
+            x0, y0, x1, y1 = self._get_norm_rect(isx, isy, ix, iy)
+            iw, ih = self.edit_img.size
+            x0, y0 = max(0, x0), max(0, y0)
+            x1, y1 = min(iw, x1), min(ih, y1)
+            if x1 - x0 > 4 and y1 - y0 > 4:
+                region = self.edit_img.crop((x0, y0, x1, y1))
+                small = region.resize((max(1, (x1 - x0) // 10), max(1, (y1 - y0) // 10)), Image.BOX)
+                blurred = small.resize((x1 - x0, y1 - y0), Image.NEAREST)
+                self.edit_img.paste(blurred, (x0, y0))
 
         self._refresh_canvas()
 
@@ -853,7 +896,6 @@ class ImageEditor(tk.Toplevel):
     def _get_pil_font(self, family, size):
         font_map = {
             "Malgun Gothic": "malgun.ttf",
-            "Arial":         "arial.ttf",
             "Consolas":      "consola.ttf",
             "Courier New":   "cour.ttf",
             "Times New Roman":"times.ttf",
@@ -944,6 +986,7 @@ class MainApp:
         # [수정] AppUserModelID 중복 설정 제거 — 모듈 최상단에서 1회만 호출
 
         self.root = tk.Tk()
+        set_window_icon(self.root)
         
         # 타이틀에 라이센스 사용자 및 단축 버전 표시 (x.xx 형식)
         user_info = self.license_data.get('user_name', 'Free User')
@@ -952,15 +995,6 @@ class MainApp:
         
         # --- [시작프로그램 모드 처리] ---
         self.is_startup = "--startup" in sys.argv
-            
-        # --- [아이콘 설정] ---
-        # [수정] iconphoto + iconbitmap 충돌 제거 → iconbitmap 단독 사용
-        ico_path = get_resource_path("DS_capture.ico")
-        try:
-            if os.path.exists(ico_path):
-                self.root.iconbitmap(ico_path)
-        except:
-            pass
         
         try:
             dpi = self.root.winfo_fpixels('1i')
@@ -985,6 +1019,9 @@ class MainApp:
         
         self.load_config() # 시작할 때 저장된 설정 읽기
         
+        # [신규] Esc 누르면 창 닫기 (메인 윈도우)
+        self.root.bind("<Escape>", self._on_esc_main)
+
         # 설정 파일이 없으면 기본값으로 즉시 생성
         if not os.path.exists(CONFIG_FILE):
             self.save_config()
@@ -1025,7 +1062,7 @@ class MainApp:
         self.canvas_recent.pack(side="left", fill="both", expand=True, padx=(10, 0))
         self.root.bind_all("<MouseWheel>", lambda e: self.canvas_recent.yview_scroll(int(-1*(e.delta/120)), "units"))
 
-        tk.Label(self.left_frame, text="CAPTURE MODES", fg="#00d2d3", font=("Arial", 10, "bold")).pack(pady=(25, 10))
+        tk.Label(self.left_frame, text="CAPTURE MODES", fg="#00d2d3", font=("Malgun Gothic", 10, "bold")).pack(pady=(25, 10))
 
         cap_style = {"bg": "#2f3542", "fg": "white", "font": ("Malgun Gothic", 10, "bold"), "pady": 12, "activebackground": "#57606f", "cursor": "hand2", "bd": 0}
         opt_style = {"bg": "#4b6584", "fg": "white", "font": ("Malgun Gothic", 10, "bold"), "pady": 10, "activebackground": "#778ca3", "cursor": "hand2", "bd": 0}
@@ -1037,11 +1074,11 @@ class MainApp:
         
         f = tk.Frame(btn_con)
         f.pack(pady=(0, 15))
-        self.ent_w = tk.Entry(f, width=5, justify='center', font=("Arial", 10), bd=2, relief="groove")
+        self.ent_w = tk.Entry(f, width=5, justify='center', font=("Malgun Gothic", 10), bd=2, relief="groove")
         self.ent_w.insert(0, getattr(self, 'saved_box_width', "800"))
         self.ent_w.pack(side=tk.LEFT, padx=3)
-        tk.Label(f, text="×", font=("Arial", 10, "bold"), fg="#a4b0be").pack(side=tk.LEFT)
-        self.ent_h = tk.Entry(f, width=5, justify='center', font=("Arial", 10), bd=2, relief="groove")
+        tk.Label(f, text="×", font=("Malgun Gothic", 10, "bold"), fg="#a4b0be").pack(side=tk.LEFT)
+        self.ent_h = tk.Entry(f, width=5, justify='center', font=("Malgun Gothic", 10), bd=2, relief="groove")
         self.ent_h.insert(0, getattr(self, 'saved_box_height', "600"))
         self.ent_h.pack(side=tk.LEFT, padx=3)
         
@@ -1050,9 +1087,9 @@ class MainApp:
         self.drag_ratio_var = tk.StringVar(value=getattr(self, 'saved_drag_ratio', "4:3 비율"))
         ratio_f = tk.Frame(btn_con)
         ratio_f.pack(fill=tk.X, pady=(0, 15))
-        self.btn_ratio_43 = tk.Button(ratio_f, text="4:3 비율", command=lambda: self.set_ratio("4:3 비율"), bg="#00d2d3", fg="white", font=("Arial", 9, "bold"), pady=6, bd=0, width=12, cursor="hand2")
+        self.btn_ratio_43 = tk.Button(ratio_f, text="4:3 비율", command=lambda: self.set_ratio("4:3 비율"), bg="#00d2d3", fg="white", font=("Malgun Gothic", 9, "bold"), pady=6, bd=0, width=12, cursor="hand2")
         self.btn_ratio_43.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        self.btn_ratio_169 = tk.Button(ratio_f, text="16:9 비율", command=lambda: self.set_ratio("16:9 비율"), bg="#4b6584", fg="white", font=("Arial", 9, "bold"), pady=6, bd=0, width=12, cursor="hand2")
+        self.btn_ratio_169 = tk.Button(ratio_f, text="16:9 비율", command=lambda: self.set_ratio("16:9 비율"), bg="#4b6584", fg="white", font=("Malgun Gothic", 9, "bold"), pady=6, bd=0, width=12, cursor="hand2")
         self.btn_ratio_169.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
         self.update_ratio_buttons()
         
@@ -1080,17 +1117,17 @@ class MainApp:
         pop = tk.Toplevel(self.root)
         self.settings_win = pop
         pop.title("환경설정 (Settings)")
-        
-        # [수정] 서브 윈도우 아이콘 명시적 지정
-        try:
-            ico_path = get_resource_path("DS_capture.ico")
-            if os.path.exists(ico_path):
-                pop.iconbitmap(ico_path)
-        except:
-            pass
+        set_window_icon(pop)
         pop.geometry(f"{int(400 * self.scale_factor)}x{int(460 * self.scale_factor)}")
         pop.attributes("-topmost", False)
         pop.config(bg="#1e272e")
+        
+        # [수정] Esc 누르면 설정 창만 닫히도록 (확실한 이벤트 차단)
+        def close_pop(e):
+            pop.destroy()
+            return "break"
+        pop.bind("<Escape>", close_pop)
+        pop.focus_force()
         
         btn_con = tk.Frame(pop, bg="#1e272e")
         btn_con.pack(fill=tk.BOTH, expand=True, padx=int(30 * self.scale_factor), pady=(int(20 * self.scale_factor), int(5 * self.scale_factor)))
@@ -1127,7 +1164,7 @@ class MainApp:
 
         # [신규] 하단에 전체 버전 정보 표시
         tk.Label(pop, text=f"Version {BUILD_VERSION} (Build: {BUILD_DATE})", 
-                 bg="#1e272e", fg="#57606f", font=("Arial", 8)).pack(side=tk.BOTTOM, pady=10)
+                 bg="#1e272e", fg="#57606f", font=("Malgun Gothic", 8)).pack(side=tk.BOTTOM, pady=10)
 
         self.update_format_buttons()
         self.update_close_action_buttons()
@@ -1143,6 +1180,8 @@ class MainApp:
                  font=("Malgun Gothic", 8)).pack(side=tk.LEFT)
         tk.Label(info_f, text=f"Build: {BUILD_DATE} {BUILD_TIME}", bg="#1e272e", fg="#a4b0be", 
                  font=("Malgun Gothic", 8)).pack(side=tk.RIGHT)
+        
+        pop.focus_force()
 
     # --- [신규] 설정 저장/불러오기 로직 ---
     def save_config(self):
@@ -1261,6 +1300,18 @@ class MainApp:
             self.btn_startup_on.config(bg="#00d2d3" if is_on else "#4b6584")
             self.btn_startup_off.config(bg="#00d2d3" if not is_on else "#4b6584")
 
+    def _on_esc_main(self, event):
+        # [수정] 메인 윈도우 외에 다른 Toplevel 창(설정, 편집기 등)이 열려 있다면 
+        # 메인 윈도우가 닫히지 않도록 보호 (이벤트 전파 문제 해결)
+        for child in self.root.winfo_children():
+            if isinstance(child, tk.Toplevel) and child.winfo_exists() and child.winfo_viewable():
+                return "break"
+
+        # 메인 윈도우가 직접 포커스를 가졌을 때만 동작하도록 보호
+        if event.widget == self.root:
+            self.on_close_window()
+        return "break"
+
     def set_save_location(self):
         d = filedialog.askdirectory(initialdir=self.save_dir)
         if d: 
@@ -1270,14 +1321,7 @@ class MainApp:
     def popup_shortcut_settings(self):
         pop = tk.Toplevel(self.root)
         pop.title("단축키 설정")
-        
-        # [수정] 서브 윈도우 아이콘 명시적 지정
-        try:
-            ico_path = get_resource_path("DS_capture.ico")
-            if os.path.exists(ico_path):
-                pop.iconbitmap(ico_path)
-        except:
-            pass
+        set_window_icon(pop)
         pop.geometry("420x350")
         pop.attributes("-topmost", False)
         modes = [("지정크기 캡처", "fixed"), ("자유 드래그", "drag"), ("전체화면 캡처", "full")]
@@ -1318,19 +1362,32 @@ class MainApp:
             pop.destroy()
             
         tk.Button(pop, text="단축키 적용 및 저장", command=save_shortcuts_action, bg="#2f3542", fg="white", pady=10).pack(fill=tk.X, padx=40, pady=20)
+        
+        # [추가] 단축키 설정 창에서도 Esc로 닫기 지원
+        pop.bind("<Escape>", lambda e: pop.destroy())
+        pop.focus_force()
 
     # --- 트레이 아이콘 및 기타 로직 (기존과 동일) ---
     def create_tray_icon(self):
         try:
             icon_path = get_resource_path("DS_capture.ico")
             if os.path.exists(icon_path):
-                icon_img = Image.open(icon_path)
+                raw_img = Image.open(icon_path).convert("RGBA")
+                # 아이콘의 투명 여백을 제거하여 알맹이만 추출 (더 크게 보이게 함)
+                bbox = raw_img.getbbox()
+                if bbox:
+                    icon_img = raw_img.crop(bbox).resize((64, 64), Image.LANCZOS)
+                else:
+                    icon_img = raw_img.resize((64, 64), Image.LANCZOS)
             else:
-                icon_img = Image.new('RGB', (64, 64), color=(47, 53, 66))
+                icon_img = Image.new('RGBA', (64, 64), color=(0, 0, 0, 0))
+                from PIL import ImageDraw
+                draw = ImageDraw.Draw(icon_img)
+                draw.ellipse((2, 2, 62, 62), fill="#f1c40f")
         except:
             icon_img = Image.new('RGB', (64, 64), color=(47, 53, 66))
         menu = pystray.Menu(
-            pystray.MenuItem('Open', self.show_window),
+            pystray.MenuItem('Open', self.show_window, default=True),
             pystray.MenuItem('Open Folder', self.open_save_folder),
             pystray.MenuItem('Exit', self.quit_app)
         )
@@ -1399,16 +1456,25 @@ class MainApp:
         dark_img = enhancer.enhance(0.8)
         
         ov = tk.Toplevel()
+        ov.withdraw() # 처음엔 숨김 상태로 생성 (깜빡임 방지)
+        set_window_icon(ov)
         ov.attributes("-fullscreen", True, "-topmost", True)
-        cv = tk.Canvas(ov, highlightthickness=0, cursor="none")
+        ov.config(bg="black") # 배경을 검은색으로 미리 지정
+        
+        cv = tk.Canvas(ov, highlightthickness=0, cursor="none", bg="black")
         cv.pack(fill=tk.BOTH, expand=True)
         
         ov.dark_photo = ImageTk.PhotoImage(dark_img)
         cv.create_image(0, 0, image=ov.dark_photo, anchor="nw")
         
-        ov.bind("<Escape>", lambda e: (ov.destroy(), self.show_window()))
+        def _on_esc_ov(e):
+            ov.destroy()
+            self.show_window()
+            return "break"
+        ov.bind("<Escape>", _on_esc_ov)
+        ov.deiconify() # 준비 완료 후 표시
         ov.focus_force()
-        rd = {"id": None, "tid": None, "tbg": None, "x": 0, "y": 0, "vline": None, "hline": None, "clear_img": None}
+        rd = {"id": None, "tid": None, "tbg": None, "x": 0, "y": 0, "vline": None, "hline": None, "clear_img": None, "last_render": 0}
         rd["clear_img"] = cv.create_image(0, 0, anchor="nw")
         
         cv.create_rectangle(self.sw // 2 - 320, 15, self.sw // 2 + 320, 45, fill="#1e1e1e", outline="")
@@ -1465,21 +1531,29 @@ class MainApp:
         def on_m(e):
             x1, y1, x2, y2 = get_rect(e)
             
+            # [최적화] 선과 테두리는 즉시 업데이트 (부드러운 마우스 움직임)
             cv.coords(rd["id"], x1, y1, x2, y2)
             cv.coords(rd["vline"], e.x, 0, e.x, self.sh)
             cv.coords(rd["hline"], 0, e.y, self.sw, e.y)
             
             w, h = int(abs(x2 - x1)), int(abs(y2 - y1))
             tx, ty = min(x1, x2), min(y1, y2) - 5
-            cv.itemconfig(rd["tid"], text=f" {w} x {h} ")
-            b = cv.bbox(rd["tid"]); cv.coords(rd["tbg"], b[0]-2, b[1]-2, b[2]+2, b[3]+2); cv.coords(rd["tid"], tx, ty)
             
-            cx_min, cy_min = min(x1, x2), min(y1, y2)
-            if w > 0 and h > 0:
-                cropped = screen_img.crop((cx_min, cy_min, cx_min + w, cy_min + h))
-                ov.active_photo = ImageTk.PhotoImage(cropped)
-                cv.itemconfig(rd["clear_img"], image=ov.active_photo)
-                cv.coords(rd["clear_img"], cx_min, cy_min)
+            # [최적화] 이미지 크롭 및 텍스트 업데이트는 쓰로틀링 적용 (약 30fps)
+            now = time.time()
+            if now - rd["last_render"] > 0.03: 
+                cv.itemconfig(rd["tid"], text=f" {w} x {h} ")
+                b = cv.bbox(rd["tid"])
+                cv.coords(rd["tbg"], b[0]-2, b[1]-2, b[2]+2, b[3]+2)
+                cv.coords(rd["tid"], tx, ty)
+                
+                if w > 0 and h > 0:
+                    cx_min, cy_min = min(x1, x2), min(y1, y2)
+                    cropped = screen_img.crop((cx_min, cy_min, cx_min + w, cy_min + h))
+                    ov.active_photo = ImageTk.PhotoImage(cropped)
+                    cv.itemconfig(rd["clear_img"], image=ov.active_photo)
+                    cv.coords(rd["clear_img"], cx_min, cy_min)
+                rd["last_render"] = now
 
         def on_r(e):
             x1, y1, x2, y2 = get_rect(e)
@@ -1561,7 +1635,7 @@ class MainApp:
                 lbl.bind("<Double-Button-1>", lambda e, path=filepath: self.on_thumbnail_dblclick(path))
                 lbl.bind("<Button-3>", lambda e, path=filepath: self._show_thumbnail_menu(e, path))
                 
-                name_lbl = tk.Label(thumb_frame, text=os.path.basename(filepath), bg="#2f3542", fg="white", font=("Arial", 8))
+                name_lbl = tk.Label(thumb_frame, text=os.path.basename(filepath), bg="#2f3542", fg="white", font=("Malgun Gothic", 8))
                 name_lbl.pack(pady=2)
                 name_lbl.bind("<Button-3>", lambda e, path=filepath: self._show_thumbnail_menu(e, path))
             except Exception as e:
