@@ -5,6 +5,7 @@ __pycache__/
 
 # PyInstaller & Nuitka
 build/
+build_*/
 dist/
 dist_*/
 *.spec
