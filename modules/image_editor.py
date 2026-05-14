@@ -8,6 +8,7 @@ from ctypes import wintypes
 import io
 import time
 from PIL import Image, ImageDraw, ImageTk, ImageOps, ImageFont, ImageEnhance, ImageFilter
+from core.utils import set_window_icon
 
 # --- [윈도우 API 및 초기 설정] ---
 try:
@@ -33,28 +34,6 @@ kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
 kernel32.GlobalLock.restype = ctypes.c_void_p
 kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
 kernel32.GlobalUnlock.restype = wintypes.BOOL
-
-def get_base_dir():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
-
-BASE_DIR = get_base_dir()
-
-def get_resource_path(relative_path):
-    if getattr(sys, 'frozen', False):
-        base_path = getattr(sys, '_MEIPASS', BASE_DIR)
-    else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_path, relative_path)
-
-def set_window_icon(window):
-    try:
-        ico_path = get_resource_path("icon/DS_capture.ico")
-        if os.path.exists(ico_path):
-            window.iconbitmap(ico_path)
-    except:
-        pass
 
 def copy_image_to_clipboard(img):
     output = io.BytesIO()
@@ -470,7 +449,6 @@ class ImageEditor(tk.Toplevel):
         copy_image_to_clipboard(self._final_img())
 
     def on_close(self):
-        # 명시적 메모리 해제
         self.edit_img = None
         self.undo_stack.clear()
         self.redo_stack.clear()
@@ -479,8 +457,7 @@ class ImageEditor(tk.Toplevel):
         self.master.destroy()
 
 def run_editor(img_path):
-    if not os.path.exists(img_path):
-        return
+    if not os.path.exists(img_path): return
     root = tk.Tk()
     root.withdraw()
     editor = ImageEditor(root, img_path)

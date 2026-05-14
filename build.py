@@ -45,13 +45,18 @@ def main():
         except Exception as e:
             print(f"Agents.md 동기화 실패: {e}")
 
-    # 2. 버전 정보 및 빌드 정보 업데이트
-    with open(py_file, 'r', encoding='utf-8') as f:
+    # 2. 버전 정보 및 빌드 정보 업데이트 (core/utils.py 관리)
+    utils_file = 'core/utils.py'
+    if not os.path.exists(utils_file):
+        print(f"Error: {utils_file} 파일을 찾을 수 없습니다.")
+        return
+
+    with open(utils_file, 'r', encoding='utf-8') as f:
         content = f.read()
 
     match = re.search(r'BUILD_VERSION = "(\d+)\.(\d+)\.(\d+)"', content)
     if not match:
-        print("버전 정보를 찾을 수 없습니다. (1.00.00 형식 필요)")
+        print("버전 정보를 찾을 수 없습니다. (core/utils.py 확인 필요)")
         return
 
     major, minor, patch = match.group(1), match.group(2), int(match.group(3))
@@ -62,11 +67,11 @@ def main():
     if is_test:
         mode_str = "TEST"
         target_dir = test_dir
-        new_version = f"{major}.{minor}.{patch:02d}" # 테스트는 버전 유지
+        new_version = f"{major}.{minor}.{patch:02d}"
     else:
         mode_str = "PRODUCTION"
         target_dir = output_dir
-        new_version = f"{major}.{minor}.{patch + 1:02d}" # 배포는 버전 업
+        new_version = f"{major}.{minor}.{patch + 1:02d}"
     
     now = datetime.datetime.now()
     new_date = now.strftime("%Y-%m-%d")
@@ -74,17 +79,17 @@ def main():
     
     print(f"\n=== [{mode_str} BUILD] Version={new_version} ===")
     
-    # 소스 코드 업데이트 (배포 시에만)
+    # 소스 코드 업데이트
     if not is_test:
         new_content = re.sub(r'BUILD_VERSION = ".*?"', f'BUILD_VERSION = "{new_version}"', content, count=1)
         new_content = re.sub(r'BUILD_DATE = ".*?"', f'BUILD_DATE = "{new_date}"', new_content, count=1)
         new_content = re.sub(r'BUILD_TIME = ".*?"', f'BUILD_TIME = "{new_time}"', new_content, count=1)
-        with open(py_file, 'w', encoding='utf-8') as f:
+        with open(utils_file, 'w', encoding='utf-8') as f:
             f.write(new_content)
-        print("빌드 정보 업데이트 완료.")
+        print("빌드 정보(core/utils.py) 업데이트 완료.")
 
     # 3. PyInstaller 명령어 구성
-    print(f"PyInstaller 패키징을 시작합니다 (One File 모드)...")
+    print(f"PyInstaller 패키징을 시작합니다...")
     
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -92,21 +97,20 @@ def main():
         "--noconfirm",
         f"--workpath=build_{mode_str.lower()}",
         f"--specpath=.",
+        "--collect-submodules=core",
+        "--collect-submodules=ui",
+        "--collect-submodules=modules",
     ]
     
     if is_test:
-        # 테스트 빌드: 폴더 형태(속도 빠름), 콘솔 창 표시
         cmd.extend(["--onedir", "--console"])
-        dist_path = os.path.join(target_dir, "DS Capture", "DS Capture.exe")
     else:
-        # 배포 빌드: 단일 파일, 콘솔 창 숨김
         cmd.extend(["--onefile", "--windowed"])
-        dist_path = os.path.join(output_dir, "DS Capture.exe")
 
     # 공통 옵션
     cmd.extend([
         "--icon=icon/DS_capture.ico",
-        "--add-data=icon/DS_capture.ico;icon",  # 아이콘 폴더 포함
+        "--add-data=icon/DS_capture.ico;icon",
         f"--name=DS Capture",
         f"--distpath={target_dir}",
         py_file

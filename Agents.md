@@ -12,7 +12,9 @@
 ## 2. 프로젝트 아키텍처 (Architecture)
 - **Main Script**: `DS_capture.py`
 - **Build Script**: `build.py` (PyInstaller 기반 버전)
-- **Licensing**: HWID 기반 오프라인 라이센스 시스템
+- **Licensing**: HWID 기반 오프라인 라이센스 시스템 (DASAN_TECHNOLOGY_SAFETY 공통 키)
+    - **SECRET_KEY**: `DASAN_TECHNOLOGY_SAFETY_SECRET_KEY_@!` (모든 앱 공통)
+    - **Master Key**: `app_name`이 `"ALL_ACCESS"`인 경우 모든 프로그램에서 유효함
     - **절대 경로**: `C:\license` (가장 먼저 탐색하며 반드시 인식해야 함)
     - **상대 경로**: 실행 폴더 내 `license` 폴더 및 실행 파일 바로 옆
 - **Configuration**: `settings.json` (실행 폴더 내 저장)
