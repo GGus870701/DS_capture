@@ -1,23 +1,21 @@
 import sys
 import os
 import math
-import time
-import ctypes
-os.environ["QT_LOGGING_RULES"] = "qt.qpa.window=false"
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsView, QGraphicsScene, 
     QGraphicsPixmapItem, QToolBar, QStatusBar, QFileDialog, 
     QColorDialog, QInputDialog, QMessageBox, QWidget, QVBoxLayout,
-    QSpinBox, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
-    QPushButton, QLineEdit, QToolButton, QMenu
+    QLineEdit, QLabel, QHBoxLayout, QComboBox,
+    QPushButton
 )
 from PySide6.QtGui import (
     QPixmap, QImage, QPainter, QPen, QColor, QBrush, 
-    QIcon, QAction, QFont, QCursor, QKeySequence, QTransform,
+    QIcon, QAction, QFont, QCursor, QKeySequence,
     QMouseEvent
 )
 from PySide6.QtCore import (
-    Qt, QPoint, QRect, QSize, QBuffer, QIODevice, QByteArray, QEvent,
+    Qt, QPoint, QRect, QSize, QByteArray, QEvent,
     Signal
 )
 from PySide6.QtSvg import QSvgRenderer
@@ -464,11 +462,8 @@ class DrawingCanvas(QGraphicsView):
         
         # 펜이나 형광펜 그리기
         if self.current_tool in ["pen", "highlight"]:
-            if modifiers & Qt.ShiftModifier and self.current_tool == "pen":
-                # Shift 누를 때는 매번 전체를 덮어쓰는 preview_step 같은 방식이 아닌 
-                # temp_pixmap 위에서 직선을 하나 긋고 이미지에 적용
-                pass # 아래 Release에서 처리하거나 preview 방식으로 구현
-            else:
+            if not (modifiers & Qt.ShiftModifier and self.current_tool == "pen"):
+                # 일반 펜 드로잉 (Shift 직선은 Release에서 확정)
                 painter.drawLine(self.last_point, end_point)
                 self.last_point = end_point
             

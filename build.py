@@ -106,7 +106,8 @@ def main():
     if is_test:
         cmd.extend(["--onedir", "--console"])
     else:
-        cmd.extend(["--onefile", "--windowed"])
+        # 배포 빌드도 이제 용량 문제로 onedir(폴더) 방식으로 변경
+        cmd.extend(["--onedir", "--windowed"])
 
     # 공통 옵션
     cmd.extend([
@@ -128,11 +129,22 @@ def main():
         print(f"위치: {target_dir}")
         print(f"소요 시간: {duration.seconds // 60}분 {duration.seconds % 60}초")
         
-        # 임시 파일 정리 (배포 빌드 시에만)
+        # 임시 파일 정리 및 압축 (배포 빌드 시에만)
         if not is_test:
             print("임시 파일 정리 중...")
             if os.path.exists('DS Capture.spec'): os.remove('DS Capture.spec')
             shutil.rmtree(f'build_{mode_str.lower()}', ignore_errors=True)
+            
+            # 결과 폴더 압축 (DS CAD Viewer 방식)
+            print("결과물 압축 중...")
+            zip_name = f"DS_Capture_v{new_version}"
+            zip_path = os.path.join(target_dir, zip_name)
+            
+            # dist_production/DS Capture 폴더를 압축
+            source_dir = os.path.join(target_dir, "DS Capture")
+            if os.path.exists(source_dir):
+                shutil.make_archive(zip_path, 'zip', target_dir, "DS Capture")
+                print(f"압축 완료: {zip_path}.zip")
     else:
         print(f"\n[ERROR] {mode_str} 빌드 실패.")
 

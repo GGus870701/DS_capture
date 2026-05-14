@@ -22,7 +22,7 @@
 ## 3. 빌드 지침 (Build Instructions)
 - **빌드 도구**: PyInstaller
 - **빌드 모드**:
-    - **PRODUCTION**: `--onefile --windowed` (단일 EXE, 콘솔 숨김, 무압축)
+    - **PRODUCTION**: `--onedir --windowed` (폴더 형태, 콘솔 숨김, 초기 실행 속도 최적화, 자동 ZIP 압축)
     - **TEST**: `--onedir --console` (폴더 형태, 콘솔 표시, 빠른 빌드)
 - **빌드 실행 규칙**: 사용자가 명시적으로 "빌드해" 또는 "Build"라고 요청할 때만 `build.py`를 실행함 (자동 빌드 금지).
 - **아이콘**: `DS_capture.ico` 필수 포함
