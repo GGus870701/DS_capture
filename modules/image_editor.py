@@ -1,467 +1,893 @@
-import tkinter as tk
-from tkinter import filedialog, ttk, colorchooser, simpledialog, messagebox
-import os
 import sys
+import os
 import math
-import ctypes
-from ctypes import wintypes
-import io
 import time
-from PIL import Image, ImageDraw, ImageTk, ImageOps, ImageFont, ImageEnhance, ImageFilter
-from core.utils import set_window_icon
+import ctypes
+os.environ["QT_LOGGING_RULES"] = "qt.qpa.window=false"
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QGraphicsView, QGraphicsScene, 
+    QGraphicsPixmapItem, QToolBar, QStatusBar, QFileDialog, 
+    QColorDialog, QInputDialog, QMessageBox, QWidget, QVBoxLayout,
+    QSpinBox, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
+    QPushButton, QLineEdit, QToolButton, QMenu
+)
+from PySide6.QtGui import (
+    QPixmap, QImage, QPainter, QPen, QColor, QBrush, 
+    QIcon, QAction, QFont, QCursor, QKeySequence, QTransform,
+    QMouseEvent
+)
+from PySide6.QtCore import (
+    Qt, QPoint, QRect, QSize, QBuffer, QIODevice, QByteArray, QEvent,
+    Signal
+)
+from PySide6.QtSvg import QSvgRenderer
 
-# --- [윈도우 API 및 초기 설정] ---
-try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)
-except Exception:
-    pass
+from core.utils import set_qt_window_icon, get_resource_path
 
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
+# --- [SVG Icons Data] ---
+SVG_ICONS = {
+    "pen": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l5 5"></path><path d="M11 11l1 1"></path></svg>',
+    "line": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>',
+    "arrow": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>',
+    "rect": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>',
+    "ellipse": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle></svg>',
+    "highlight": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"></path><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"></path></svg>',
+    "mosaic": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="3" y1="15" x2="21" y2="15"></line><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>',
+    "text": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>',
+    "crop": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 13V6a2 2 0 0 1 2-2h7"></path><path d="M18 11v7a2 2 0 0 1-2 2H9"></path><line x1="1" y1="6" x2="1" y2="6"></line><line x1="18" y1="23" x2="18" y2="23"></line></svg>',
+    "undo": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"></path><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path></svg>',
+    "redo": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"></path><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"></path></svg>',
+    "save": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>',
+    "save_as": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>',
+    "zoom_extents": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>',
+    "fill": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>'
+}
 
-user32.OpenClipboard.argtypes = [ctypes.c_void_p]
-user32.OpenClipboard.restype = wintypes.BOOL
-user32.EmptyClipboard.argtypes = []
-user32.EmptyClipboard.restype = wintypes.BOOL
-user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
-user32.SetClipboardData.restype = ctypes.c_void_p
-user32.CloseClipboard.argtypes = []
-user32.CloseClipboard.restype = wintypes.BOOL
+def get_svg_icon(name, color="#d2dae2"):
+    svg_str = SVG_ICONS.get(name, "")
+    if not svg_str: return QIcon()
+    svg_str = svg_str.replace('currentColor', color)
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    renderer = QSvgRenderer(QByteArray(svg_str.encode()))
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pixmap)
 
-kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
-kernel32.GlobalAlloc.restype = ctypes.c_void_p
-kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
-kernel32.GlobalLock.restype = ctypes.c_void_p
-kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
-kernel32.GlobalUnlock.restype = wintypes.BOOL
+# --- [Styles] ---
+STYLE_SHEET = """
+QMainWindow {
+    background-color: #1e272e;
+}
+QToolBar {
+    background-color: #2f3640;
+    border-bottom: 1px solid #3d3d3d;
+    spacing: 5px;
+    padding: 5px;
+}
+QToolButton {
+    background-color: transparent;
+    border-radius: 4px;
+    padding: 4px;
+}
+QToolButton:hover {
+    background-color: #485460;
+}
+QToolButton:checked {
+    background-color: #0fbcf9;
+}
+QStatusBar {
+    background-color: #1e272e;
+    color: #d2dae2;
+    font-family: 'Malgun Gothic';
+    font-size: 14px;
+    font-weight: bold;
+}
+QSpinBox {
+    background-color: #2f3542;
+    color: #ffffff;
+    border: 1px solid #3d3d3d;
+    border-radius: 4px;
+    padding: 2px;
+}
+QSpinBox::up-button, QSpinBox::down-button {
+    width: 20px;
+    background-color: #3d3d3d;
+}
+QSpinBox::up-arrow {
+    image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M5 2L1 8h8z' fill='white'/></svg>");
+    width: 12px;
+    height: 12px;
+}
+QSpinBox::down-arrow {
+    image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M5 8L1 2h8z' fill='white'/></svg>");
+    width: 12px;
+    height: 12px;
+}
+QLabel {
+    color: #d2dae2;
+    font-family: 'Malgun Gothic';
+    font-size: 14px;
+    font-weight: bold;
+}
+QComboBox {
+    background-color: #2f3542;
+    color: #ffffff;
+    border: 1px solid #3d3d3d;
+    border-radius: 4px;
+    padding: 2px 5px;
+    font-family: 'Malgun Gothic';
+    font-size: 14px;
+}
+QComboBox QAbstractItemView {
+    background-color: #2f3542;
+    color: #ffffff;
+    selection-background-color: #57606f;
+    outline: none;
+    border: 1px solid #3d3d3d;
+}
 
-def copy_image_to_clipboard(img):
-    output = io.BytesIO()
-    img.convert("RGB").save(output, "BMP")
-    data = output.getvalue()[14:]
-    output.close()
-    if user32.OpenClipboard(0):
-        try:
-            user32.EmptyClipboard()
-            h_mem = kernel32.GlobalAlloc(0x0042, len(data))
-            if h_mem:
-                p_mem = kernel32.GlobalLock(h_mem)
-                if p_mem:
-                    ctypes.memmove(p_mem, data, len(data))
-                    kernel32.GlobalUnlock(h_mem)
-                    user32.SetClipboardData(8, h_mem)
-        finally:
-            user32.CloseClipboard()
+/* 커스텀 스핀박스 스타일 */
+.CustomSpinBox {
+    background-color: transparent;
+}
+.CustomSpinBox QLineEdit {
+    background-color: #1e272e;
+    color: #ffffff;
+    border: 1px solid #3d3d3d;
+    border-radius: 4px;
+    padding: 2px;
+    font-family: 'Malgun Gothic';
+    font-size: 14px;
+}
+.CustomSpinBox QPushButton {
+    background-color: #3d3d3d;
+    color: #ffffff;
+    border: 1px solid #555;
+    border-radius: 2px;
+    font-size: 10px;
+    padding: 0px;
+}
+.CustomSpinBox QPushButton:hover {
+    background-color: #485460;
+}
 
-class ImageEditor(tk.Toplevel):
-    MAX_UNDO = 10
-    PALETTE = ["#FF0000", "#FF8C00", "#FFFF00", "#008000", 
-               "#0000FF", "#800080", "#FFFFFF", "#000000"]
+/* 플로팅 버튼 스타일 */
+#FloatingFitBtn {
+    background-color: rgba(47, 53, 66, 200);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 30);
+    border-radius: 6px;
+    padding: 5px;
+}
+#FloatingFitBtn:hover {
+    background-color: rgba(87, 96, 111, 230);
+    border: 1px solid rgba(255, 255, 255, 80);
+}
+"""
 
-    def __init__(self, parent, filepath):
+class CustomSpinBox(QWidget):
+    valueChanged = Signal(int)
+
+    def __init__(self, min_val=1, max_val=100, default=5, suffix="", parent=None):
         super().__init__(parent)
-        self.withdraw()
-        self.filepath = filepath
-        self.attributes("-topmost", False)
-        self.title(f"편집기 — {os.path.basename(filepath)}")
-        set_window_icon(self)
+        self.setProperty("class", "CustomSpinBox")
+        self._value = default
+        self._min = min_val
+        self._max = max_val
+        self._suffix = suffix
 
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        target_w = int(sw * 0.75)
-        target_h = int(target_w * 9 / 16)
-        x = (sw - target_w) // 2
-        y = (sh - target_h) // 2
-        self.geometry(f"{target_w}x{target_h}+{x}+{y}")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
 
-        raw = Image.open(filepath)
-        self.edit_img = raw.convert("RGBA")
+        self.edit = QLineEdit(str(default))
+        self.edit.setFixedWidth(45)
+        self.edit.setFixedHeight(30)
+        self.edit.setAlignment(Qt.AlignCenter)
+        self.edit.editingFinished.connect(self._on_edit)
+
+        self.btn_up = QPushButton("▲")
+        self.btn_up.setFixedSize(22, 14)
+        self.btn_up.clicked.connect(self.step_up)
+
+        self.btn_down = QPushButton("▼")
+        self.btn_down.setFixedSize(22, 14)
+        self.btn_down.clicked.connect(self.step_down)
+
+        btn_layout = QVBoxLayout()
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(1)
+        btn_layout.addWidget(self.btn_up)
+        btn_layout.addWidget(self.btn_down)
+
+        layout.addWidget(self.edit)
+        layout.addLayout(btn_layout)
+        
+        # 전체 위젯 크기 고정 (여백 문제 해결)
+        self.setFixedWidth(75)
+
+    def step_up(self):
+        if self._value < self._max:
+            self.setValue(self._value + 1)
+            self.valueChanged.emit(self._value)
+
+    def step_down(self):
+        if self._value > self._min:
+            self.setValue(self._value - 1)
+            self.valueChanged.emit(self._value)
+
+    def _on_edit(self):
+        try:
+            text = self.edit.text().replace(self._suffix, "").strip()
+            val = int(text)
+            self.setValue(val)
+            self.valueChanged.emit(self._value)
+        except ValueError:
+            self.setValue(self._value)
+
+    def value(self):
+        return self._value
+
+    def setValue(self, val):
+        self._value = max(self._min, min(self._max, val))
+        self.edit.setText(f"{self._value}{self._suffix}")
+
+class DrawingCanvas(QGraphicsView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setScene(QGraphicsScene(self))
+        self.setRenderHint(QPainter.Antialiasing)
+        self.setRenderHint(QPainter.SmoothPixmapTransform)
+        self.setTransformationAnchor(QGraphicsView.NoAnchor)
+        self.setResizeAnchor(QGraphicsView.NoAnchor)
+        self.setAlignment(Qt.AlignCenter)
+        self.setBackgroundBrush(QBrush(QColor("#2f3640")))
+        
+        self.image_item = QGraphicsPixmapItem()
+        self.scene().addItem(self.image_item)
+        
+        self.drawing = False
+        self.last_point = QPoint()
+        self.current_tool = "pen"
+        self.pen_color = QColor(Qt.red)
+        self.pen_width = 5
+        self.saved_pen_width = 5 # 형광펜 전환 전 두께 저장용
+        self.fill_color = QColor(255, 0, 0, 255)
+        self.is_fill = False
+        
         self.undo_stack = []
         self.redo_stack = []
-
-        self.current_tool = "pen"
-        self.draw_color   = "#FF0000"
-        self.custom_fill_color = "#FF0000"
-        self.line_width   = 5
-        self.font_family  = "Malgun Gothic"
-        self.font_size    = 20
-        self.fill_shape_var = tk.BooleanVar(value=False)
-
-        self._sx = self._sy = 0
-        self._temp_items = []
-        self._pen_pts    = []
-        self.scale       = 1.0
-        self._tk_img     = None
-        self._tool_btns  = {}
+        self.max_undo = 20
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.panning = False
+        self.pan_start = QPoint()
         
-        self.prev_lw = self.line_width
-        self.prev_color = self.draw_color
-
-        self._build_ui()
-        self.after(50, self._fit_and_refresh)
-        self._bind_events()
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
+    def load_image(self, filepath):
+        self.original_pixmap = QPixmap(filepath)
+        self.image_item.setPixmap(self.original_pixmap)
         
-        self.deiconify()
-        self.focus_force()
-
-    def _build_ui(self):
-        top_area = tk.Frame(self, bg="#1e272e")
-        top_area.pack(fill=tk.X)
+        # 이미지 주변에 충분한 여백을 주어 모서리를 중앙으로 가져올 수 있게 함 (Overscroll)
+        r = self.image_item.boundingRect()
+        margin_w = r.width()
+        margin_h = r.height()
+        self.scene().setSceneRect(r.adjusted(-margin_w, -margin_h, margin_w, margin_h))
         
-        bs = dict(bg="#485460", fg="white", font=("Malgun Gothic", 9, "bold"),
-                  bd=0, padx=12, pady=6, cursor="hand2",
-                  activebackground="#0fbcf9", activeforeground="white")
-
-        row1 = tk.Frame(top_area, bg="#1e272e", pady=8, padx=12)
-        row1.pack(fill=tk.X)
-        
-        tk.Button(row1, text="💾 저장",        command=self.save,              **bs).pack(side=tk.LEFT, padx=3)
-        tk.Button(row1, text="📁 다른이름저장", command=self.save_as,           **bs).pack(side=tk.LEFT, padx=3)
-        tk.Button(row1, text="📋 클립보드",     command=self.copy_to_clipboard, **bs).pack(side=tk.LEFT, padx=3)
-        tk.Frame(row1, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
-        tk.Button(row1, text="↩ 실행취소",     command=self.undo,              **bs).pack(side=tk.LEFT, padx=2)
-        tk.Button(row1, text="↪ 재실행",       command=self.redo,              **bs).pack(side=tk.LEFT, padx=2)
-        tk.Frame(row1, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
-        tk.Button(row1, text="↺ 90°",          command=lambda: self.rotate(-90),**bs).pack(side=tk.LEFT, padx=2)
-        tk.Button(row1, text="↻ 90°",          command=lambda: self.rotate(90), **bs).pack(side=tk.LEFT, padx=2)
-        tk.Button(row1, text="↔ 좌우반전",     command=lambda: self.flip("h"), **bs).pack(side=tk.LEFT, padx=2)
-        tk.Button(row1, text="↕ 상하반전",     command=lambda: self.flip("v"), **bs).pack(side=tk.LEFT, padx=2)
-        
-        self._size_lbl = tk.Label(row1, text="", bg="#1e272e", fg="#00d8d6", font=("Malgun Gothic", 10, "bold"))
-        self._size_lbl.pack(side=tk.RIGHT, padx=10)
-
-        row2 = tk.Frame(top_area, bg="#2f3640", pady=10, padx=12)
-        row2.pack(fill=tk.X)
-        tk.Label(row2, text="도구:", bg="#2f3640", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,10))
-        
-        tools = [("펜", "pen"), ("직선","line"), ("화살표","arrow"),
-                 ("사각형","rect"), ("원","ellipse"), ("텍스트","text"),
-                 ("형광펜","highlight"), ("모자이크","mosaic"), ("자르기","crop")]
-        for label, name in tools:
-            b = tk.Button(row2, text=label, height=1,
-                          bg="#718093", fg="white", bd=0, cursor="hand2",
-                          font=("Malgun Gothic", 9, "bold"), activebackground="#0fbcf9",
-                          padx=14, pady=5,
-                          command=lambda n=name: self._select_tool(n))
-            b.pack(side=tk.LEFT, padx=3)
-            self._tool_btns[name] = b
-        self._select_tool("pen")
-
-        row3 = tk.Frame(top_area, bg="#1e272e", pady=10, padx=12)
-        row3.pack(fill=tk.X)
-        
-        def create_palette(parent, callback):
-            for c in self.PALETTE:
-                tk.Button(parent, bg=c, width=2, height=1, bd=1, relief="solid", cursor="hand2", 
-                          command=lambda col=c: callback(col)).pack(side=tk.LEFT, padx=2)
-            tk.Button(parent, text="⊕", bg="#485460", fg="white", bd=0, cursor="hand2", font=("Malgun Gothic",10, "bold"), 
-                      command=self._pick_color if callback == self._set_color else self._pick_fill_color, padx=8).pack(side=tk.LEFT, padx=5)
-
-        tk.Label(row3, text="선 색상:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
-        create_palette(row3, self._set_color)
-        self._color_ind = tk.Label(row3, bg=self.draw_color, width=3, height=1, relief="solid", bd=1)
-        self._color_ind.pack(side=tk.LEFT, padx=3)
-
-        tk.Frame(row3, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
-        tk.Label(row3, text="선 두께:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
-        self._width_var = tk.IntVar(value=self.line_width)
-        tk.Spinbox(row3, from_=1, to=100, textvariable=self._width_var, width=4, font=("Malgun Gothic", 10), 
-                   command=lambda: setattr(self,"line_width",self._width_var.get())).pack(side=tk.LEFT)
-                   
-        tk.Frame(row3, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
-        tk.Checkbutton(row3, text="채우기", variable=self.fill_shape_var, bg="#1e272e", fg="#d2dae2", 
-                       selectcolor="#2f3640", activebackground="#1e272e", activeforeground="white",
-                       font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(5,6))
-        create_palette(row3, self._set_fill_color)
-        self._fill_color_ind = tk.Label(row3, bg=self.custom_fill_color, width=3, height=1, relief="solid", bd=1)
-        self._fill_color_ind.pack(side=tk.LEFT, padx=3)
-
-        tk.Frame(row3, bg="#808e9b", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
-        tk.Label(row3, text="글꼴:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(0,6))
-        self._font_var = tk.StringVar(value=self.font_family)
-        ttk.Combobox(row3, textvariable=self._font_var, values=["Malgun Gothic", "Consolas", "Impact"], state="readonly", width=10, font=("Malgun Gothic", 9)).pack(side=tk.LEFT, padx=2)
-        self._font_var.trace_add("write", lambda *a: setattr(self,"font_family",self._font_var.get()))
-
-        tk.Label(row3, text="크기:", bg="#1e272e", fg="#d2dae2", font=("Malgun Gothic", 9, "bold")).pack(side=tk.LEFT, padx=(8,4))
-        self._fsize_var = tk.IntVar(value=self.font_size)
-        tk.Spinbox(row3, from_=8, to=120, textvariable=self._fsize_var, width=3, font=("Malgun Gothic", 10), 
-                   command=lambda: setattr(self,"font_size",self._fsize_var.get())).pack(side=tk.LEFT)
-
-        self.canvas = tk.Canvas(self, bg="#2f3640", cursor="crosshair", highlightthickness=0)
-        self.canvas.pack(fill=tk.BOTH, expand=True)
-
-    def _select_tool(self, name):
-        prev_t = self.current_tool
-        self.current_tool = name
-        for n, b in self._tool_btns.items():
-            b.config(bg="#0fbcf9" if n == name else "#718093")
-        if name == "highlight":
-            if prev_t != "highlight":
-                self.prev_lw = self.line_width
-                self.prev_color = self.draw_color
-            self.draw_color = "#FFFF00"
-            self.line_width = 25
-            self._color_ind.config(bg=self.draw_color)
-            self._width_var.set(25)
-        elif prev_t == "highlight":
-            self.line_width = self.prev_lw
-            self.draw_color = self.prev_color
-            self._color_ind.config(bg=self.draw_color)
-            self._width_var.set(self.line_width)
-
-    def _set_color(self, color):
-        self.draw_color = color
-        self._color_ind.config(bg=color)
-
-    def _pick_color(self):
-        c = colorchooser.askcolor(color=self.draw_color, parent=self)[1]
-        if c: self._set_color(c)
-
-    def _pick_fill_color(self):
-        c = colorchooser.askcolor(color=self.custom_fill_color or self.draw_color, parent=self)[1]
-        if c: self._set_fill_color(c)
-
-    def _set_fill_color(self, color):
-        self.custom_fill_color = color
-        self._fill_color_ind.config(bg=color)
-        self.fill_shape_var.set(True)
-
-    def _fit_and_refresh(self):
-        self.update_idletasks()
-        cw = max(self.canvas.winfo_width(),  400)
-        ch = max(self.canvas.winfo_height(), 300)
-        iw, ih = self.edit_img.size
-        self.scale = min(1.0, cw/iw, ch/ih)
-        self._refresh_canvas()
-        self._size_lbl.config(text=f"{iw} × {ih} px  ({self.scale*100:.0f}%)")
-
-    def _refresh_canvas(self):
-        iw, ih = self.edit_img.size
-        dw = max(1, int(iw * self.scale))
-        dh = max(1, int(ih * self.scale))
-        try: r_filter = Image.Resampling.BILINEAR
-        except AttributeError: r_filter = Image.BILINEAR
-        disp = self.edit_img.convert("RGB").resize((dw, dh), r_filter)
-        self._tk_img = ImageTk.PhotoImage(disp)
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor="nw", image=self._tk_img)
-
-    def _c2i(self, cx, cy):
-        return int(cx / self.scale), int(cy / self.scale)
-
-    def _get_norm_rect(self, x1, y1, x2, y2):
-        return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
-
-    def _is_shift_pressed(self, event):
-        return (event.state & 0x0001) or (ctypes.windll.user32.GetKeyState(0x10) & 0x8000)
-
-    def _bind_events(self):
-        self.canvas.bind("<ButtonPress-1>",   self._on_press)
-        self.canvas.bind("<B1-Motion>",        self._on_drag)
-        self.canvas.bind("<ButtonRelease-1>",  self._on_release)
-        self.bind("<Control-z>",               lambda e: self.undo())
-        self.bind("<Control-Z>",               lambda e: self.undo())
-        self.bind("<Control-y>",               lambda e: self.redo())
-        self.bind("<Control-Y>",               lambda e: self.redo())
-        self.bind("<Escape>",                  lambda e: self.on_close())
-        self.bind("<Configure>",               self._on_configure)
-
-    def _on_configure(self, event):
-        if event.widget == self:
-            if hasattr(self, '_cfg_job') and self._cfg_job is not None:
-                self.after_cancel(self._cfg_job)
-            self._cfg_job = self.after(50, self._fit_and_refresh)
-
-    def _on_press(self, event):
-        self._sx, self._sy = event.x, event.y
-        self._pen_pts = [(event.x, event.y)]
-        for item in self._temp_items: self.canvas.delete(item)
-        self._temp_items = []
-
-    def _on_drag(self, event):
-        if self.current_tool not in ["pen", "highlight"]:
-            for item in self._temp_items: self.canvas.delete(item)
-            self._temp_items = []
-        x, y = event.x, event.y
-        sx, sy = self._sx, self._sy
-        col = self.draw_color
-        lw  = max(1, int(self._width_var.get() * self.scale))
-        t   = self.current_tool
-
-        if t in ["pen", "highlight"]:
-            is_shift = self._is_shift_pressed(event)
-            if t == "highlight":
-                y = sy
-                self._pen_pts = [(sx, sy), (x, y)]
-                self._temp_items.append(self.canvas.create_line(sx, sy, x, y, fill=col, width=lw, capstyle=tk.ROUND))
-            elif is_shift:
-                if abs(x - sx) > abs(y - sy): y = sy
-                else: x = sx
-                self._pen_pts = [(sx, sy), (x, y)]
-                self._temp_items.append(self.canvas.create_line(sx, sy, x, y, fill=col, width=lw, capstyle=tk.ROUND))
-            else:
-                self._pen_pts.append((x, y))
-                pts = self._pen_pts
-                if len(pts) >= 2:
-                    self._temp_items.append(self.canvas.create_line(*pts[-2], *pts[-1], fill=col, width=lw, capstyle=tk.ROUND, joinstyle=tk.ROUND))
-        elif t == "line": self._temp_items.append(self.canvas.create_line(sx,sy,x,y,fill=col,width=lw))
-        elif t == "arrow": self._temp_items.append(self.canvas.create_line(sx,sy,x,y,fill=col,width=lw, arrow=tk.LAST, arrowshape=(16,20,6)))
-        elif t == "rect":
-            x0, y0, x1, y1 = self._get_norm_rect(sx, sy, x, y)
-            if self.fill_shape_var.get():
-                fill_c = self.custom_fill_color or col
-                self._temp_items.append(self.canvas.create_rectangle(x0, y0, x1, y1, fill=fill_c, outline=col, width=lw))
-            else: self._temp_items.append(self.canvas.create_rectangle(x0, y0, x1, y1, outline=col, width=lw))
-        elif t == "ellipse":
-            x0, y0, x1, y1 = self._get_norm_rect(sx, sy, x, y)
-            if self.fill_shape_var.get():
-                fill_c = self.custom_fill_color or col
-                self._temp_items.append(self.canvas.create_oval(x0, y0, x1, y1, fill=fill_c, outline=col, width=lw))
-            else: self._temp_items.append(self.canvas.create_oval(x0, y0, x1, y1, outline=col, width=lw))
-        elif t in ("mosaic","crop","text"):
-            x0, y0, x1, y1 = self._get_norm_rect(sx, sy, x, y)
-            self._temp_items.append(self.canvas.create_rectangle(x0, y0, x1, y1, outline="#00FF00", width=2, dash=(6,4)))
-
-    def _on_release(self, event):
-        for item in self._temp_items: self.canvas.delete(item)
-        self._temp_items = []
-        x, y   = event.x, event.y
-        sx, sy = self._sx, self._sy
-        ix, iy   = self._c2i(x,  y)
-        isx, isy = self._c2i(sx, sy)
-        t = self.current_tool
-        if t == "text": self._do_text(isx, isy); return
-        if t == "crop":
-            x0,y0 = min(isx,ix), min(isy,iy); x1,y1 = max(isx,ix), max(isy,iy)
-            iw, ih = self.edit_img.size
-            x0,y0 = max(0,x0), max(0,y0); x1,y1 = min(iw,x1), min(ih,y1)
-            if x1-x0 > 5 and y1-y0 > 5:
-                self._push_undo()
-                self.edit_img = self.edit_img.crop((x0,y0,x1,y1))
-                self._fit_and_refresh()
-            return
         self._push_undo()
-        draw = ImageDraw.Draw(self.edit_img)
-        r,g,b = self._hex2rgb(self.draw_color); col_rgba = (r,g,b,255); lw = self.line_width
-        if t == "pen":
-            if self._is_shift_pressed(event):
-                if abs(x - sx) > abs(y - sy): y = sy
-                else: x = sx
-                self._pen_pts = [(sx, sy), (x, y)]
-            pts = [self._c2i(px,py) for px,py in self._pen_pts]
-            if len(pts) >= 2: draw.line(pts, fill=col_rgba, width=lw, joint="curve")
-            elif len(pts) == 1:
-                r2 = max(1, lw//2); px,py = pts[0]
-                draw.ellipse([px-r2,py-r2,px+r2,py+r2], fill=col_rgba)
-        elif t == "line": draw.line([isx,isy,ix,iy], fill=col_rgba, width=lw)
-        elif t == "arrow": self._draw_arrow(draw, isx,isy,ix,iy, col_rgba, lw)
-        elif t in ["rect", "ellipse"]:
-            x0, y0, x1, y1 = self._get_norm_rect(isx, isy, ix, iy)
-            is_fill = self.fill_shape_var.get()
-            fill_rgb = self._hex2rgb(self.custom_fill_color or self.draw_color) if is_fill else None
-            if t == "rect":
-                if is_fill: draw.rectangle([x0, y0, x1, y1], fill=(*fill_rgb, 255), outline=col_rgba, width=lw)
-                else: draw.rectangle([x0, y0, x1, y1], outline=col_rgba, width=lw)
-            else:
-                if is_fill: draw.ellipse([x0, y0, x1, y1], fill=(*fill_rgb, 255), outline=col_rgba, width=lw)
-                else: draw.ellipse([x0, y0, x1, y1], outline=col_rgba, width=lw)
-        elif t == "highlight":
-            y = sy; pts = [self._c2i(px, py) for px, py in [(sx, sy), (x, y)]]
-            overlay = Image.new("RGBA", self.edit_img.size, (0,0,0,0)); ov_draw = ImageDraw.Draw(overlay)
-            ov_draw.line(pts, fill=(r,g,b,50), width=lw, joint="round")
-            overlay = overlay.filter(ImageFilter.GaussianBlur(radius=0.4))
-            self.edit_img = Image.alpha_composite(self.edit_img, overlay)
-        elif t == "mosaic":
-            x0, y0, x1, y1 = self._get_norm_rect(isx, isy, ix, iy)
-            iw, ih = self.edit_img.size; x0, y0 = max(0, x0), max(0, y0); x1, y1 = min(iw, x1), min(ih, y1)
-            if x1 - x0 > 4 and y1 - y0 > 4:
-                region = self.edit_img.crop((x0, y0, x1, y1))
-                small = region.resize((max(1, (x1 - x0) // 10), max(1, (y1 - y0) // 10)), Image.BOX)
-                blurred = small.resize((x1 - x0, y1 - y0), Image.NEAREST)
-                self.edit_img.paste(blurred, (x0, y0))
-        self._refresh_canvas()
-
-    def _draw_arrow(self, draw, x1,y1,x2,y2, color, lw):
-        draw.line([x1,y1,x2,y2], fill=color, width=lw)
-        angle = math.atan2(y2-y1, x2-x1); size = max(12, lw*4); spread = math.pi/6
-        for side in (spread, -spread):
-            ex = x2 - size * math.cos(angle - side); ey = y2 - size * math.sin(angle - side)
-            draw.line([x2,y2,int(ex),int(ey)], fill=color, width=lw)
-
-    def _do_text(self, x, y):
-        text = simpledialog.askstring("텍스트 입력", "입력할 텍스트:", parent=self)
-        if not text: return
-        self._push_undo()
-        draw = ImageDraw.Draw(self.edit_img)
-        font_size = self._fsize_var.get(); self.font_size = font_size
-        pil_font = self._get_pil_font(self.font_family, font_size)
-        r,g,b = self._hex2rgb(self.draw_color)
-        draw.text((x, y), text, fill=(r,g,b,255), font=pil_font)
-        self._refresh_canvas()
-
-    def _get_pil_font(self, family, size):
-        font_map = {"Malgun Gothic": "malgun.ttf", "Consolas": "consola.ttf", "Courier New": "cour.ttf", "Times New Roman":"times.ttf", "Calibri": "calibri.ttf"}
-        fname = font_map.get(family, "arial.ttf"); path = os.path.join("C:/Windows/Fonts", fname)
-        try: return ImageFont.truetype(path, size)
-        except: return ImageFont.load_default()
-
-    def _hex2rgb(self, hex_color):
-        hex_color = hex_color.lstrip("#")
-        return tuple(int(hex_color[i:i+2],16) for i in (0,2,4))
-
+        
     def _push_undo(self):
-        self.undo_stack.append(self.edit_img.copy())
-        if len(self.undo_stack) > self.MAX_UNDO: self.undo_stack.pop(0)
+        self.undo_stack.append(self.image_item.pixmap().copy())
+        if len(self.undo_stack) > self.max_undo:
+            self.undo_stack.pop(0)
         self.redo_stack.clear()
-
+        
     def undo(self):
-        if self.undo_stack: self.redo_stack.append(self.edit_img.copy()); self.edit_img = self.undo_stack.pop(); self._fit_and_refresh()
-
+        if len(self.undo_stack) > 1:
+            self.redo_stack.append(self.undo_stack.pop())
+            self.image_item.setPixmap(self.undo_stack[-1].copy())
+            
     def redo(self):
-        if self.redo_stack: self.undo_stack.append(self.edit_img.copy()); self.edit_img = self.redo_stack.pop(); self._fit_and_refresh()
+        if self.redo_stack:
+            pix = self.redo_stack.pop()
+            self.undo_stack.append(pix.copy())
+            self.image_item.setPixmap(pix)
 
-    def rotate(self, deg):
-        self._push_undo(); self.edit_img = self.edit_img.rotate(deg, expand=True); self._fit_and_refresh()
+    def _update_zoom_label(self):
+        factor = int(self.transform().m11() * 100)
+        if hasattr(self.window(), 'zoom_combo'):
+            combo = self.window().zoom_combo
+            combo.blockSignals(True)
+            text = f"{factor}%"
+            idx = combo.findText(text)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            else:
+                combo.setCurrentText(text)
+            combo.blockSignals(False)
 
-    def flip(self, mode):
-        self._push_undo()
-        if mode == "h": self.edit_img = ImageOps.mirror(self.edit_img)
-        else: self.edit_img = ImageOps.flip(self.edit_img)
-        self._fit_and_refresh()
+    def wheelEvent(self, event):
+        zoom_in_factor = 1.05
+        zoom_out_factor = 1 / zoom_in_factor
+        
+        # 1. 현재 마우스 위치의 씬 좌표 저장
+        old_scene_pos = self.mapToScene(event.position().toPoint())
+        
+        # 2. 줌 배율 결정
+        if event.angleDelta().y() > 0:
+            zoom_factor = zoom_in_factor
+        else:
+            zoom_factor = zoom_out_factor
+            
+        # 3. 확대/축소 적용
+        self.scale(zoom_factor, zoom_factor)
+        
+        # 4. 줌 적용 후 동일한 마우스 위치의 새로운 씬 좌표 계산
+        new_scene_pos = self.mapToScene(event.position().toPoint())
+        
+        # 5. 두 씬 좌표의 차이만큼 뷰를 이동시켜 마우스 지점을 화면상에 고정
+        delta = new_scene_pos - old_scene_pos
+        self.translate(delta.x(), delta.y())
+        
+        self._update_zoom_label()
 
-    def _final_img(self): return self.edit_img.convert("RGB")
+    def mousePressEvent(self, event):
+        self.setFocus()
+        if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and self.panning):
+            self.pan_start = event.pos()
+            self.setCursor(Qt.ClosedHandCursor)
+            return
 
-    def save(self):
-        img = self._final_img(); ext = os.path.splitext(self.filepath)[1].lower()
-        if ext in (".jpg",".jpeg"): img.save(self.filepath, quality=95)
-        else: img.save(self.filepath)
-        self.title(f"편집기 — {os.path.basename(self.filepath)} ✓")
+        if event.button() == Qt.LeftButton:
+            self.drawing = True
+            self.last_point = self.mapToScene(event.pos()).toPoint()
+            self.start_point = self.last_point
+            self.temp_pixmap = self.image_item.pixmap().copy()
+            
+    def mouseMoveEvent(self, event):
+        # 1. 휠 버튼 드래그 이동 (Drag Pan)
+        if (event.buttons() & Qt.MiddleButton):
+            delta = event.pos() - self.pan_start
+            self.pan_start = event.pos()
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            return
 
-    def save_as(self):
-        ft = [("PNG","*.png"),("JPEG","*.jpg *.jpeg"),("모든 파일","*.*")]
-        path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=ft, initialdir=os.path.dirname(self.filepath), parent=self)
+        # 2. 스페이스바 호버 이동 (Glide Pan - 클릭 불필요)
+        if self.panning:
+            delta = event.pos() - self.pan_start
+            self.pan_start = event.pos()
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            return
+
+        pos = self.mapToScene(event.pos()).toPoint()
+        
+        # 상태바 도움말 갱신을 위해 부모에게 위치 알림 (필요시)
+        if hasattr(self.window(), 'update_status_pos'):
+            self.window().update_status_pos(pos.x(), pos.y())
+
+        if self.drawing:
+            if (self.current_tool == "pen" and event.modifiers() & Qt.ShiftModifier) or self.current_tool == "highlight":
+                self._preview_step(pos, event.modifiers())
+            elif self.current_tool == "pen":
+                self._draw_step(pos, event.modifiers())
+            else:
+                # 도형 미리보기 (Preview)
+                self._preview_step(pos, event.modifiers())
+        
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and self.panning):
+            if self.panning:
+                self.setCursor(Qt.OpenHandCursor)
+            else:
+                self.unsetCursor()
+            return
+
+        if event.button() == Qt.LeftButton and self.drawing:
+            self.drawing = False
+            pos = self.mapToScene(event.pos()).toPoint()
+            
+            if self.current_tool in ["line", "arrow", "rect", "ellipse"] or (self.current_tool == "pen" and event.modifiers() & Qt.ShiftModifier) or self.current_tool == "highlight":
+                self.image_item.setPixmap(self._get_final_drawing_pixmap(pos, event.modifiers()))
+            elif self.current_tool == "mosaic":
+                self._apply_mosaic(QRect(self.start_point, pos).normalized())
+            elif self.current_tool == "text":
+                self._add_text(self.start_point)
+            elif self.current_tool == "crop":
+                self._apply_crop(QRect(self.start_point, pos).normalized())
+                
+            self._push_undo()
+            
+    def _get_final_drawing_pixmap(self, end_point, modifiers):
+        # mouseMove의 preview 로직과 동일하게 최종본 생성
+        final = self.temp_pixmap.copy()
+        painter = QPainter(final)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(self.pen_color, self.pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        painter.setPen(pen)
+        
+        start = self.start_point
+        end = end_point
+        t = self.current_tool
+        
+        if t == "highlight":
+            alpha_color = self.pen_color
+            alpha_color.setAlpha(51)
+            pen.setColor(alpha_color)
+            end.setY(start.y())
+            painter.setPen(pen)
+            painter.drawLine(start, end)
+        elif t == "pen" and modifiers & Qt.ShiftModifier:
+            dx = abs(end.x() - start.x())
+            dy = abs(end.y() - start.y())
+            if dx > dy: end.setY(start.y())
+            else: end.setX(start.x())
+            painter.drawLine(start, end)
+        elif t == "line": painter.drawLine(start, end)
+        elif t == "arrow": self._draw_arrow(painter, start, end)
+        elif t == "rect":
+            rect = QRect(start, end).normalized()
+            if self.is_fill: painter.fillRect(rect, self.fill_color)
+            painter.drawRect(rect)
+        elif t == "ellipse":
+            rect = QRect(start, end).normalized()
+            if self.is_fill: painter.setBrush(QBrush(self.fill_color))
+            painter.drawEllipse(rect)
+        painter.end()
+        return final
+            
+    def _draw_step(self, end_point, modifiers):
+        pixmap = self.image_item.pixmap()
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        pen = QPen(self.pen_color, self.pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        
+        if self.current_tool == "highlight":
+            # 형광펜은 고정 20% 투명도 (사용자 요청)
+            alpha_color = self.pen_color
+            alpha_color.setAlpha(51) # 255 * 0.2 = 51
+            pen.setColor(alpha_color)
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+            # 수평 고정
+            end_point.setY(self.start_point.y())
+        elif modifiers & Qt.ShiftModifier and self.current_tool == "pen":
+            # Shift 누를 시 직선 (수직/수평 고정)
+            dx = abs(end_point.x() - self.start_point.x())
+            dy = abs(end_point.y() - self.start_point.y())
+            if dx > dy: end_point.setY(self.start_point.y())
+            else: end_point.setX(self.start_point.x())
+            
+        painter.setPen(pen)
+        
+        # 펜이나 형광펜 그리기
+        if self.current_tool in ["pen", "highlight"]:
+            if modifiers & Qt.ShiftModifier and self.current_tool == "pen":
+                # Shift 누를 때는 매번 전체를 덮어쓰는 preview_step 같은 방식이 아닌 
+                # temp_pixmap 위에서 직선을 하나 긋고 이미지에 적용
+                pass # 아래 Release에서 처리하거나 preview 방식으로 구현
+            else:
+                painter.drawLine(self.last_point, end_point)
+                self.last_point = end_point
+            
+        painter.end()
+        self.image_item.setPixmap(pixmap)
+
+    def _preview_step(self, end_point, modifiers):
+        # 실시간 미리보기를 위해 복사본에 그리고 표시
+        preview = self.temp_pixmap.copy()
+        painter = QPainter(preview)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        pen = QPen(self.pen_color, self.pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        if self.current_tool == "highlight":
+            alpha_color = self.pen_color
+            alpha_color.setAlpha(51)
+            pen.setColor(alpha_color)
+            end_point.setY(self.start_point.y())
+        
+        painter.setPen(pen)
+        
+        start = self.start_point
+        end = end_point
+        
+        if self.current_tool == "pen" and modifiers & Qt.ShiftModifier:
+            # Shift 직선 미리보기
+            dx = abs(end.x() - start.x())
+            dy = abs(end.y() - start.y())
+            if dx > dy: end.setY(start.y())
+            else: end.setX(start.x())
+            painter.drawLine(start, end)
+        elif self.current_tool == "highlight":
+            painter.drawLine(start, end)
+        elif self.current_tool == "line":
+            painter.drawLine(start, end)
+        elif self.current_tool == "arrow":
+            self._draw_arrow(painter, start, end)
+        elif self.current_tool == "rect":
+            rect = QRect(start, end).normalized()
+            if self.is_fill: painter.fillRect(rect, self.fill_color)
+            painter.drawRect(rect)
+        elif self.current_tool == "ellipse":
+            rect = QRect(start, end).normalized()
+            if self.is_fill: painter.setBrush(QBrush(self.fill_color))
+            painter.drawEllipse(rect)
+        elif self.current_tool == "mosaic":
+            rect = QRect(start, end).normalized()
+            painter.setPen(QPen(Qt.white, 1, Qt.DashLine))
+            painter.drawRect(rect)
+        elif self.current_tool == "crop":
+            rect = QRect(start, end).normalized()
+            painter.setPen(QPen(Qt.green, 2, Qt.DashLine))
+            painter.drawRect(rect)
+            
+        painter.end()
+        self.image_item.setPixmap(preview)
+            
+    def _apply_mosaic(self, rect):
+        pixmap = self.image_item.pixmap()
+        img = pixmap.toImage()
+        target_rect = rect.intersected(img.rect())
+        if target_rect.width() < 5 or target_rect.height() < 5: return
+        
+        region = img.copy(target_rect)
+        small = region.scaled(max(1, target_rect.width() // 10), max(1, target_rect.height() // 10), Qt.IgnoreAspectRatio, Qt.FastTransformation)
+        mosaic = small.scaled(target_rect.width(), target_rect.height(), Qt.IgnoreAspectRatio, Qt.FastTransformation)
+        
+        painter = QPainter(pixmap)
+        painter.drawImage(target_rect, mosaic)
+        painter.end()
+        self.image_item.setPixmap(pixmap)
+
+    def _add_text(self, pos):
+        text, ok = QInputDialog.getText(self, "텍스트 입력", "내용:")
+        if ok and text:
+            pixmap = self.image_item.pixmap()
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(QPen(self.pen_color))
+            painter.setFont(QFont("Malgun Gothic", 20, QFont.Bold))
+            painter.drawText(pos, text)
+            painter.end()
+            self.image_item.setPixmap(pixmap)
+
+    def _apply_crop(self, rect):
+        pixmap = self.image_item.pixmap()
+        target_rect = rect.intersected(pixmap.rect())
+        if target_rect.width() < 10 or target_rect.height() < 10: return
+        
+        cropped = pixmap.copy(target_rect)
+        self.image_item.setPixmap(cropped)
+        
+        # 자르기 후에도 여백 재설정
+        r = cropped.boundingRect()
+        margin_w = r.width()
+        margin_h = r.height()
+        self.scene().setSceneRect(r.adjusted(-margin_w, -margin_h, margin_w, margin_h))
+        
+        # 잘라내기 후 중앙 정렬을 위해 부모에게 알림 (옵션)
+        if hasattr(self.window(), 'center_canvas'):
+            self.window().center_canvas()
+
+    def _draw_arrow(self, painter, start, end):
+        painter.drawLine(start, end)
+        angle = math.atan2(end.y() - start.y(), end.x() - start.x())
+        size = self.pen_width * 4
+        arrow_p1 = end - QPoint(size * math.cos(angle - math.pi/6), size * math.sin(angle - math.pi/6))
+        arrow_p2 = end - QPoint(size * math.cos(angle + math.pi/6), size * math.sin(angle + math.pi/6))
+        painter.drawPolygon([end, arrow_p1, arrow_p2])
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            self.panning = True
+            # 현재 마우스 위치를 시작점으로 저장
+            self.pan_start = self.mapFromGlobal(QCursor.pos())
+            self.setCursor(Qt.ClosedHandCursor)
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            self.panning = False
+            self.unsetCursor()
+            self.setDragMode(QGraphicsView.NoDrag)
+        super().keyReleaseEvent(event)
+
+class ImageEditor(QMainWindow):
+    def __init__(self, filepath):
+        super().__init__()
+        self.filepath = filepath
+        self.setWindowTitle(f"DS 이미지 편집기 - {os.path.basename(filepath)}")
+        set_qt_window_icon(self)
+        self.setStyleSheet(STYLE_SHEET)
+        
+        self.canvas = DrawingCanvas()
+        self.setCentralWidget(self.canvas)
+        
+        # 플로팅 화면 맞춤 버튼 추가 (닫기 버튼 아래쪽 위치 겨냥)
+        self.fit_btn = QPushButton(self)
+        self.fit_btn.setObjectName("FloatingFitBtn")
+        self.fit_btn.setIcon(get_svg_icon("zoom_extents"))
+        self.fit_btn.setIconSize(QSize(22, 22))
+        self.fit_btn.setFixedSize(38, 38)
+        self.fit_btn.setToolTip("화면 맞춤 (F)")
+        self.fit_btn.setCursor(Qt.PointingHandCursor)
+        self.fit_btn.clicked.connect(self.center_canvas)
+        # 초기 위치는 resizeEvent에서 조정됨
+        
+        self._init_ui()
+        self.canvas.load_image(filepath)
+        
+        self.resize(1100, 800)
+        self.statusBar().showMessage("준비 완료")
+        
+    def _init_ui(self):
+        toolbar = QToolBar("메인 도구")
+        toolbar.setIconSize(QSize(28, 28))
+        toolbar.setMovable(False)
+        self.addToolBar(Qt.TopToolBarArea, toolbar)
+        
+        tools = [
+            ("pen", "펜", "자유롭게 그리기 (Shift: 직선)", "pen"),
+            ("line", "직선", "직선 그리기", "line"),
+            ("arrow", "화살표", "화살표 그리기", "arrow"),
+            ("rect", "사각형", "사각형 그리기", "rect"),
+            ("ellipse", "원", "원 그리기", "ellipse"),
+            ("highlight", "형광펜", "반투명 형광펜 (수직 고정)", "highlight"),
+            ("mosaic", "모자이크", "영역 모자이크 처리", "mosaic"),
+            ("text", "텍스트", "글자 입력", "text"),
+            ("crop", "자르기", "이미지 자르기", "crop")
+        ]
+        
+        self.tool_actions = {}
+        for tool_id, name, help_text, icon_key in tools:
+            action = QAction(get_svg_icon(icon_key), name, self)
+            action.setCheckable(True)
+            action.setToolTip(name)
+            action.setStatusTip(help_text)
+            action.triggered.connect(lambda checked, t=tool_id: self.set_tool(t))
+            toolbar.addAction(action)
+            self.tool_actions[tool_id] = action
+
+        self.tool_actions["pen"].setChecked(True)
+
+        toolbar.addSeparator()
+        
+        undo_act = QAction(get_svg_icon("undo"), "실행 취소", self)
+        undo_act.setShortcut(QKeySequence.Undo)
+        undo_act.triggered.connect(self.canvas.undo)
+        toolbar.addAction(undo_act)
+        
+        redo_act = QAction(get_svg_icon("redo"), "재실행", self)
+        redo_act.setShortcut(QKeySequence.Redo)
+        redo_act.triggered.connect(self.canvas.redo)
+        toolbar.addAction(redo_act)
+        
+        toolbar.addSeparator()
+        
+        save_act = QAction(get_svg_icon("save"), "저장 (SAVE)", self)
+        save_act.setShortcut(QKeySequence.Save)
+        save_act.setStatusTip("원본_mod 형식으로 같은 폴더에 저장합니다.")
+        save_act.triggered.connect(self.save_image)
+        toolbar.addAction(save_act)
+        
+        save_as_act = QAction(get_svg_icon("save_as"), "다른 이름으로 저장", self)
+        save_as_act.setStatusTip("다른 폴더에 다른 이름으로 저장합니다.")
+        save_as_act.triggered.connect(self.save_as_image)
+        toolbar.addAction(save_as_act)
+        
+        toolbar.addSeparator()
+        
+        # 선 두께 설정
+        toolbar.addWidget(QLabel(" 선 두께 "))
+        self.width_spin = CustomSpinBox(1, 100, self.canvas.pen_width)
+        self.width_spin.valueChanged.connect(self._change_width)
+        toolbar.addWidget(self.width_spin)
+        
+        toolbar.addSeparator()
+        
+        # 선 색상 선택 버튼
+        toolbar.addWidget(QLabel(" 선 색상 "))
+        self.stroke_color_btn = QWidget()
+        self.stroke_color_btn.setFixedSize(24, 24)
+        self.stroke_color_btn.setCursor(Qt.PointingHandCursor)
+        self.stroke_color_btn.setStyleSheet(f"background-color: {self.canvas.pen_color.name()}; border: 2px solid white; border-radius: 4px;")
+        self.stroke_color_btn.mousePressEvent = lambda e: self._pick_color("stroke")
+        toolbar.addWidget(self.stroke_color_btn)
+        
+        toolbar.addSeparator()
+
+        # 채우기 사용 여부 및 색상
+        fill_act = QAction(get_svg_icon("fill"), "채우기 사용", self)
+        fill_act.setCheckable(True)
+        fill_act.setChecked(self.canvas.is_fill)
+        fill_act.triggered.connect(self._toggle_fill)
+        toolbar.addAction(fill_act)
+
+        toolbar.addWidget(QLabel(" 채우기 색상 "))
+        self.fill_color_btn = QWidget()
+        self.fill_color_btn.setFixedSize(24, 24)
+        self.fill_color_btn.setCursor(Qt.PointingHandCursor)
+        self.fill_color_btn.setStyleSheet(f"background-color: {self.canvas.fill_color.name(QColor.HexArgb)}; border: 2px solid #555; border-radius: 4px;")
+        self.fill_color_btn.mousePressEvent = lambda e: self._pick_color("fill")
+        toolbar.addWidget(self.fill_color_btn)
+        
+        toolbar.addSeparator()
+
+        # 채우기 불투명도 설정
+        toolbar.addWidget(QLabel(" 불투명도(%) "))
+        self.alpha_spin = CustomSpinBox(0, 100, int(self.canvas.fill_color.alpha() / 255 * 100))
+        self.alpha_spin.valueChanged.connect(self._change_alpha)
+        toolbar.addWidget(self.alpha_spin)
+        
+        self.statusBar().setStyleSheet("QStatusBar::item { border: None; }")
+        
+        # 줌 퍼센트 표시 및 선택용 콤보박스
+        self.zoom_combo = QComboBox()
+        self.zoom_combo.setEditable(True)
+        self.zoom_combo.addItems(["10%", "25%", "50%", "75%", "100%", "125%", "150%", "200%", "300%", "400%", "500%"])
+        self.zoom_combo.setCurrentText("100%")
+        self.zoom_combo.setFixedWidth(90)
+        self.zoom_combo.setFixedHeight(30)
+        self.zoom_combo.currentTextChanged.connect(self._on_zoom_combo_changed)
+        self.statusBar().addPermanentWidget(self.zoom_combo)
+        
+    def _on_zoom_combo_changed(self, text):
+        try:
+            val = int(text.replace("%", ""))
+            factor = val / 100.0
+            # 현재 줌을 리셋하고 원하는 비율로 설정
+            self.canvas.resetTransform()
+            self.canvas.scale(factor, factor)
+        except:
+            pass
+        
+    def _change_width(self, val):
+        self.canvas.pen_width = val
+
+    def _change_alpha(self, val):
+        # 0-100% 를 0-255 로 변환하여 적용
+        alpha = int(val / 100 * 255)
+        color = self.canvas.fill_color
+        color.setAlpha(alpha)
+        self.canvas.fill_color = color
+        # 버튼 색상 업데이트
+        border = "white" if self.canvas.is_fill else "#555"
+        self.fill_color_btn.setStyleSheet(f"background-color: {color.name(QColor.HexArgb)}; border: 2px solid {border}; border-radius: 4px;")
+        
+    def _toggle_fill(self, checked):
+        self.canvas.is_fill = checked
+        self.fill_color_btn.setEnabled(checked)
+        self.alpha_spin.setEnabled(checked)
+        border = "white" if checked else "#555"
+        self.fill_color_btn.setStyleSheet(f"background-color: {self.canvas.fill_color.name(QColor.HexArgb)}; border: 2px solid {border}; border-radius: 4px;")
+
+    def _pick_color(self, type="stroke"):
+        if type == "stroke":
+            color = QColorDialog.getColor(self.canvas.pen_color, self, "선 색상 선택")
+            if color.isValid():
+                self.canvas.pen_color = color
+                self.stroke_color_btn.setStyleSheet(f"background-color: {color.name()}; border: 2px solid white; border-radius: 4px;")
+        else:
+            # 채우기 색상은 알파 제외하고 선택 (외부 UI에서 관리)
+            color = QColorDialog.getColor(self.canvas.fill_color, self, "채우기 색상 선택")
+            if color.isValid():
+                # 기존 알파값 유지
+                color.setAlpha(self.canvas.fill_color.alpha())
+                self.canvas.fill_color = color
+                border = "white" if self.canvas.is_fill else "#555"
+                self.fill_color_btn.setStyleSheet(f"background-color: {color.name(QColor.HexArgb)}; border: 2px solid {border}; border-radius: 4px;")
+        
+    def set_tool(self, tool_id):
+        # 형광펜 전환 전 두께 저장 및 복원 로직
+        if self.canvas.current_tool != "highlight" and tool_id == "highlight":
+            self.canvas.saved_pen_width = self.canvas.pen_width
+            self.canvas.pen_width = 25
+            self.width_spin.setValue(25)
+        elif self.canvas.current_tool == "highlight" and tool_id != "highlight":
+            self.canvas.pen_width = self.canvas.saved_pen_width
+            self.width_spin.setValue(self.canvas.saved_pen_width)
+
+        for tid, act in self.tool_actions.items():
+            act.setChecked(tid == tool_id)
+        self.canvas.current_tool = tool_id
+        self.statusBar().showMessage(f"선택된 도구: {self.tool_actions[tool_id].text()}")
+
+    def update_status_pos(self, x, y):
+        self.statusBar().showMessage(f"좌표: ({x}, {y})")
+
+    def save_image(self):
+        # 원본_mod 이름 생성 (이미 _mod인 경우 중복 방지)
+        dir_name = os.path.dirname(self.filepath)
+        base_name, ext = os.path.splitext(os.path.basename(self.filepath))
+        
+        if base_name.endswith("_mod"):
+            new_name = f"{base_name}{ext}"
+        else:
+            new_name = f"{base_name}_mod{ext}"
+            
+        target_path = os.path.join(dir_name, new_name)
+        
+        # 덮어쓰기 확인
+        if os.path.exists(target_path):
+            reply = QMessageBox.question(self, "덮어쓰기 확인", 
+                                       f"이미 수정된 파일이 존재합니다:\n{new_name}\n\n덮어씌우시겠습니까?",
+                                       QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.No:
+                return
+
+        self.canvas.image_item.pixmap().save(target_path)
+        QMessageBox.information(self, "저장 완료", f"이미지가 저장되었습니다:\n{new_name}")
+
+    def save_as_image(self):
+        path, _ = QFileDialog.getSaveFileName(self, "다른 이름으로 저장", self.filepath, "Images (*.png *.jpg *.bmp)")
         if path:
-            img = self._final_img(); ext = os.path.splitext(path)[1].lower()
-            img.save(path, quality=95) if ext in (".jpg",".jpeg") else img.save(path)
-            self.filepath = path; self.title(f"편집기 — {os.path.basename(path)} ✓")
+            self.canvas.image_item.pixmap().save(path)
+            self.filepath = path
+            self.setWindowTitle(f"DS 이미지 편집기 - {os.path.basename(path)}")
 
-    def copy_to_clipboard(self):
-        copy_image_to_clipboard(self._final_img())
+    def center_canvas(self):
+        """이미지를 현재 창 크기에 맞춤 (Zoom Extents)"""
+        if not self.canvas.image_item or self.canvas.image_item.pixmap().isNull():
+            return
+        
+        # 이미지 영역(BoundingRect)을 기준으로 뷰에 맞춤
+        # fitInView는 내부적으로 scale과 centerOn을 수행하지만, 
+        # NoAnchor 설정 시 추가 보정이 필요할 수 있음
+        self.canvas.fitInView(self.canvas.image_item.boundingRect(), Qt.KeepAspectRatio)
+        
+        # 확실한 중앙 정렬을 위해 아이콘/아이템 자체를 기준으로 centerOn 재호출
+        self.canvas.centerOn(self.canvas.image_item)
+        self.canvas._update_zoom_label()
 
-    def on_close(self):
-        self.edit_img = None
-        self.undo_stack.clear()
-        self.redo_stack.clear()
-        import gc
-        gc.collect()
-        self.master.destroy()
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 창이 완전히 뜬 후 중앙 정렬 수행
+        self.center_canvas()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # 창 크기 변경 시(최대화 포함) 이미지 맞춤 유지
+        self.center_canvas()
+        
+        # 플로팅 버튼 위치 조정 (우측 상단 닫기 버튼 아래 영역)
+        if hasattr(self, 'fit_btn'):
+            # 마진 10px 정도 주어 우측 상단 배치
+            self.fit_btn.move(self.width() - self.fit_btn.width() - 20, 60)
+            self.fit_btn.raise_()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+        elif event.key() == Qt.Key_Space:
+            # 스페이스바는 캔버스로 전달
+            self.canvas.keyPressEvent(event)
+            return
+        elif event.key() == Qt.Key_F:
+            # 화면 맞춤 (Fit)
+            self.center_canvas()
+            return
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key_Space:
+            self.canvas.keyReleaseEvent(event)
+            return
+        super().keyReleaseEvent(event)
 
 def run_editor(img_path):
-    if not os.path.exists(img_path): return
-    root = tk.Tk()
-    root.withdraw()
-    editor = ImageEditor(root, img_path)
-    root.mainloop()
+    app = QApplication(sys.argv)
+    # 스타일을 Fusion으로 고정하여 CSS 일관성 확보
+    app.setStyle("Fusion")
+    
+    # 기본 폰트 설정
+    font = QFont("Malgun Gothic", 10)
+    app.setFont(font)
+    
+    editor = ImageEditor(img_path)
+    editor.show()
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     if len(sys.argv) >= 2:

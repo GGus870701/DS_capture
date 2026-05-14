@@ -77,7 +77,7 @@ class MainApp:
         self.right_frame.pack(side=tk.RIGHT, fill=tk.Y, expand=False)
         self.right_frame.pack_propagate(False)
 
-        tk.Label(self.right_frame, text="최근 캡처 목록", bg="#1e272e", fg="#00d2d3", font=("Malgun Gothic", 10, "bold")).pack(pady=(20, 10))
+        tk.Label(self.right_frame, text="최근 캡처 및 수정 목록", bg="#1e272e", fg="#00d2d3", font=("Malgun Gothic", 10, "bold")).pack(pady=(20, 10))
         
         bot_f = tk.Frame(self.right_frame, bg="#1e272e")
         bot_f.pack(side=tk.BOTTOM, fill=tk.X, pady=10, padx=10)
@@ -139,6 +139,30 @@ class MainApp:
         
         if self.is_startup:
             self.root.withdraw()
+
+        # 창이 포커스를 받을 때 목록 갱신 (리소스 절약 및 에디터 저장 결과 반영)
+        self.root.bind("<FocusIn>", lambda e: self.refresh_recent_list())
+
+    def refresh_recent_list(self):
+        """저장 폴더를 스캔하여 목록을 최신화함 (수동 또는 이벤트 발생 시 호출)"""
+        try:
+            if not os.path.exists(self.save_dir): return
+            
+            # 폴더 내 이미지 파일들 (시간순 정렬)
+            files = [os.path.join(self.save_dir, f) for f in os.listdir(self.save_dir) 
+                     if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))]
+            files.sort(key=os.path.getmtime, reverse=True)
+            
+            # 상위 10개 추출
+            new_recent = files[:10]
+            
+            # 변경사항이 있을 때만 UI 갱신
+            if new_recent != self.recent_captures:
+                self.recent_captures = new_recent
+                self.update_thumbnails()
+                self.save_config()
+        except:
+            pass
 
     def open_settings_window(self):
         if hasattr(self, 'settings_win') and self.settings_win.winfo_exists():

@@ -34,3 +34,13 @@ def set_window_icon(window):
             window.iconbitmap(ico_path)
     except:
         pass
+
+def set_qt_window_icon(window):
+    """PySide6 윈도우에 아이콘 적용"""
+    try:
+        from PySide6.QtGui import QIcon
+        ico_path = get_resource_path("icon/DS_capture.ico")
+        if os.path.exists(ico_path):
+            window.setWindowIcon(QIcon(ico_path))
+    except:
+        pass

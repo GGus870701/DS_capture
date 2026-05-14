@@ -5,13 +5,18 @@ import tkinter as tk
 from core.utils import set_window_icon, LICENSE_DIR, BASE_DIR
 from core import validator
 from ui.main_app import MainApp
-from modules import image_editor
 
-# DPI 인식 설정 (가장 먼저 수행)
+# Qt DPI 경고 숨기기 및 DPI 설정
+os.environ["QT_LOGGING_RULES"] = "qt.qpa.window=false"
+
 try:
+    # Tkinter를 위해 DPI 인식 설정
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
 except Exception:
-    pass
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except:
+        pass
 
 # 작업표시줄 아이콘 그룹화 설정
 try:
@@ -47,6 +52,7 @@ def focus_existing_window():
 def main_entry():
     # 1. 이미지 편집기 모드로 실행된 경우 (멀티 프로세스)
     if "--editor" in sys.argv and len(sys.argv) >= 3:
+        from modules import image_editor
         img_path = sys.argv[2]
         image_editor.run_editor(img_path)
         sys.exit(0)

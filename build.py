@@ -97,6 +97,7 @@ def main():
         "--noconfirm",
         f"--workpath=build_{mode_str.lower()}",
         f"--specpath=.",
+        "--collect-all=PySide6",
         "--collect-submodules=core",
         "--collect-submodules=ui",
         "--collect-submodules=modules",
