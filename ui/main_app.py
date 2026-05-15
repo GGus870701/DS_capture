@@ -11,6 +11,7 @@ import winreg
 import pythoncom
 import win32gui
 import win32com.client
+import win32clipboard
 import keyboard
 import pystray
 from PIL import Image, ImageGrab, ImageTk, ImageEnhance
@@ -273,7 +274,10 @@ class MainApp:
             except: pass
 
     def apply_shortcuts(self):
-        keyboard.unhook_all()
+        try:
+            keyboard.unhook_all()
+        except: pass
+
         for mode, hk_str in self.shortcuts.items():
             if not hk_str: continue
             try:
@@ -282,8 +286,9 @@ class MainApp:
                 elif mode == "full": keyboard.add_hotkey(hk_str, self.full_capture)
             except: pass
             
+        # 탐색기 이미지 붙여넣기 (Ctrl+Shift+V) 등록
         try:
-            keyboard.add_hotkey('ctrl+v', self.handle_explorer_paste, suppress=False)
+            keyboard.add_hotkey('ctrl+shift+v', self.handle_explorer_paste, suppress=False)
         except: pass
 
     def set_format(self, fmt):
@@ -421,52 +426,85 @@ class MainApp:
         except: pass
 
     def get_active_explorer_path(self):
+        """현재 활성화된 윈도우 탐색기 또는 바탕화면의 경로를 반환"""
         pythoncom.CoInitialize()
         try:
+            # 포커스된 윈도우의 최상위 부모(Root)를 찾음 (자식 요소 포커스 대응)
             hwnd = win32gui.GetForegroundWindow()
             if not hwnd: return None
+            hwnd = win32gui.GetAncestor(hwnd, 2) # GA_ROOT
+            
             window_title = win32gui.GetWindowText(hwnd)
             shell = win32com.client.Dispatch("Shell.Application")
+            
             explorer_windows = []
             for window in shell.Windows():
                 try:
-                    if window.HWND == hwnd: explorer_windows.append(window)
-                except: continue
+                    # HWND 비교를 통해 해당 창의 모든 탭/윈도우 수집
+                    if window.HWND == hwnd:
+                        explorer_windows.append(window)
+                except:
+                    continue
+            
+            # 탐색기 창이 발견되지 않은 경우 바탕화면 여부 체크
             if not explorer_windows:
                 class_name = win32gui.GetClassName(hwnd)
                 if class_name in ["Progman", "WorkerW"]:
                     return os.path.join(os.environ["USERPROFILE"], "Desktop")
                 return None
-            if len(explorer_windows) == 1:
-                return explorer_windows[0].Document.Folder.Self.Path
-            for window in explorer_windows:
-                try:
-                    loc_name = getattr(window, "LocationName", "")
-                    full_path = window.Document.Folder.Self.Path
-                    display_name = window.Document.Folder.Title
-                    candidates = [loc_name, full_path, display_name]
-                    if any(c == window_title for c in candidates if c): return full_path
-                    if any(c and (c in window_title or window_title in c) for c in candidates): return full_path
-                except: continue
+            
+            # 윈도우 11 탭 환경 대응: 창 제목과 일치하는 탭 탐색
+            if len(explorer_windows) > 1:
+                for window in explorer_windows:
+                    try:
+                        # LocationName이나 Title이 창 제목에 포함되어 있는지 확인
+                        loc_name = getattr(window, "LocationName", "")
+                        display_name = window.Document.Folder.Title
+                        if (loc_name and loc_name in window_title) or (display_name and display_name in window_title):
+                            return window.Document.Folder.Self.Path
+                    except:
+                        continue
+            
+            # 일치하는 탭을 못 찾았거나 단일 창인 경우 첫 번째 경로 반환
             return explorer_windows[0].Document.Folder.Self.Path
-        except: pass
-        finally: pythoncom.CoUninitialize()
-        return None
+        except:
+            return None
+        finally:
+            pythoncom.CoUninitialize()
 
     def generate_filename(self):
         time_str = time.strftime('%Y%m%d_%H%M%S')
         return f"{time_str}_capture.{self.save_format}"
 
     def handle_explorer_paste(self):
-        target_path = self.get_active_explorer_path()
-        if not target_path: return
+        """Ctrl+Shift+V 발생 시 탐색기 창이면 클립보드 이미지를 저장합니다."""
         try:
+            target_path = self.get_active_explorer_path()
+            if not target_path: return
+
+            # 클립보드 형식 확인
+            is_image = False
+            win32clipboard.OpenClipboard()
+            try:
+                if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_DIB):
+                    is_image = True
+            finally:
+                win32clipboard.CloseClipboard()
+
+            if not is_image: return
+            
             img = ImageGrab.grabclipboard()
-            if isinstance(img, Image.Image):
+            if img and isinstance(img, Image.Image):
                 filename = self.generate_filename()
                 filepath = os.path.join(target_path, filename)
-                if self.save_format == "jpg": img.convert("RGB").save(filepath, quality=95)
-                else: img.save(filepath)
+                
+                if self.save_format == "jpg":
+                    img.convert("RGB").save(filepath, quality=95)
+                else:
+                    img.save(filepath)
+                
+                # 저장 완료 후 최근 목록 갱신
+                self.root.after(100, self.refresh_recent_list)
         except: pass
 
     def on_close_window(self):
@@ -489,21 +527,20 @@ class MainApp:
         os._exit(0)
 
     def copy_image_to_clipboard(self, img):
+        """이미지를 윈도우 클립보드에 표준 DIB 형식으로 복사"""
         output = io.BytesIO()
         img.convert("RGB").save(output, "BMP")
-        data = output.getvalue()[14:]
+        data = output.getvalue()[14:] # BITMAPFILEHEADER(14바이트) 제외
         output.close()
-        if user32.OpenClipboard(0):
-            try:
-                user32.EmptyClipboard()
-                h_mem = kernel32.GlobalAlloc(0x0042, len(data))
-                if h_mem:
-                    p_mem = kernel32.GlobalLock(h_mem)
-                    if p_mem:
-                        ctypes.memmove(p_mem, data, len(data))
-                        kernel32.GlobalUnlock(h_mem)
-                        user32.SetClipboardData(8, h_mem)
-            finally: user32.CloseClipboard()
+
+        try:
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+            win32clipboard.CloseClipboard()
+        except Exception as e:
+            with open("debug_error.log", "a", encoding="utf-8") as f:
+                f.write(f"[{time.ctime()}] Copy to clipboard failed: {e}\n")
 
     def open_box(self):
         self.save_config()

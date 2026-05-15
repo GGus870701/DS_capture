@@ -22,6 +22,13 @@ from PySide6.QtSvg import QSvgRenderer
 
 from core.utils import set_qt_window_icon, get_resource_path
 
+import io
+import ctypes
+import win32clipboard
+from ctypes import wintypes
+user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
 # --- [SVG Icons Data] ---
 SVG_ICONS = {
     "pen": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l5 5"></path><path d="M11 11l1 1"></path></svg>',
@@ -38,7 +45,8 @@ SVG_ICONS = {
     "save": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>',
     "save_as": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>',
     "zoom_extents": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>',
-    "fill": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>'
+    "fill": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>',
+    "copy": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>'
 }
 
 def get_svg_icon(name, color="#d2dae2"):
@@ -667,10 +675,14 @@ class ImageEditor(QMainWindow):
         save_act.triggered.connect(self.save_image)
         toolbar.addAction(save_act)
         
-        save_as_act = QAction(get_svg_icon("save_as"), "다른 이름으로 저장", self)
-        save_as_act.setStatusTip("다른 폴더에 다른 이름으로 저장합니다.")
         save_as_act.triggered.connect(self.save_as_image)
         toolbar.addAction(save_as_act)
+        
+        copy_act = QAction(get_svg_icon("copy"), "클립보드 복사", self)
+        copy_act.setShortcut(QKeySequence.Copy)
+        copy_act.setStatusTip("현재 이미지를 클립보드에 복사합니다. (Ctrl+C)")
+        copy_act.triggered.connect(self.copy_to_clipboard)
+        toolbar.addAction(copy_act)
         
         toolbar.addSeparator()
         
@@ -821,6 +833,28 @@ class ImageEditor(QMainWindow):
             self.canvas.image_item.pixmap().save(path)
             self.filepath = path
             self.setWindowTitle(f"DS 이미지 편집기 - {os.path.basename(path)}")
+
+    def copy_to_clipboard(self):
+        """현재 캔버스의 이미지를 클립보드에 표준 DIB 형식으로 복사"""
+        pixmap = self.canvas.image_item.pixmap()
+        if pixmap.isNull(): return
+        
+        # QPixmap -> 비트맵 데이터를 위해 메모리 버퍼 사용
+        img_buffer = io.BytesIO()
+        pixmap.toImage().save(img_buffer, "BMP")
+        
+        # Windows 클립보드 API를 사용하여 비트맵 데이터 업로드
+        data = img_buffer.getvalue()[14:] # BMP 헤더 14바이트 제외
+        img_buffer.close()
+        
+        try:
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+            win32clipboard.CloseClipboard()
+            self.statusBar().showMessage("클립보드에 복사되었습니다.", 3000)
+        except Exception as e:
+            QMessageBox.warning(self, "복사 실패", f"클립보드에 복사할 수 없습니다: {e}")
 
     def center_canvas(self):
         """이미지를 현재 창 크기에 맞춤 (Zoom Extents)"""

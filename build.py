@@ -91,17 +91,28 @@ def main():
     # 3. PyInstaller 명령어 구성
     print(f"PyInstaller 패키징을 시작합니다...")
     
+    # 제외할 대형 모듈 리스트 (용량 최적화)
+    excludes = [
+        'numpy', 'matplotlib', 'pandas', 'scipy', 'PyQt5', 'PyQt6',
+        'IPython', 'notebook', 'jedi', 'setuptools', 'PySide6.QtWebEngineCore',
+        'PySide6.QtWebEngineWidgets', 'PySide6.Qt3DCore', 'PySide6.QtCharts'
+    ]
+    
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--clean",
         "--noconfirm",
         f"--workpath=build_{mode_str.lower()}",
         f"--specpath=.",
-        "--collect-all=PySide6",
+        "--collect-submodules=PySide6.QtSvg", # SVG 렌더링에 필요
         "--collect-submodules=core",
         "--collect-submodules=ui",
         "--collect-submodules=modules",
     ]
+    
+    # Exclude 옵션 추가
+    for ex in excludes:
+        cmd.extend(["--exclude-module", ex])
     
     if is_test:
         cmd.extend(["--onedir", "--console"])
@@ -140,11 +151,21 @@ def main():
             zip_name = f"DS_Capture_v{new_version}"
             zip_path = os.path.join(target_dir, zip_name)
             
-            # dist_production/DS Capture 폴더를 압축
-            source_dir = os.path.join(target_dir, "DS Capture")
-            if os.path.exists(source_dir):
-                shutil.make_archive(zip_path, 'zip', target_dir, "DS Capture")
+            # 1. 'DS Capture' 폴더 이름을 버전이 포함된 이름으로 임시 변경 (CAD Viewer 방식)
+            original_dir = os.path.join(target_dir, "DS Capture")
+            versioned_dir = os.path.join(target_dir, zip_name)
+            
+            if os.path.exists(original_dir):
+                if os.path.exists(versioned_dir): shutil.rmtree(versioned_dir)
+                os.rename(original_dir, versioned_dir)
+                
+                # 2. 버전이 포함된 폴더 '내부'의 파일들을 압축 파일의 최상위에 담음 (중첩 폴더 방지)
+                shutil.make_archive(zip_path, 'zip', versioned_dir)
                 print(f"압축 완료: {zip_path}.zip")
+                
+                # 3. 배포용 압축 완료 후 원본 폴더 삭제 (압축 파일만 남기기)
+                shutil.rmtree(versioned_dir, ignore_errors=True)
+                print(f"원본 폴더 정리 완료. 최종 결과물: {zip_path}.zip")
     else:
         print(f"\n[ERROR] {mode_str} 빌드 실패.")
 
