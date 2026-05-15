@@ -124,6 +124,7 @@ def main():
     cmd.extend([
         "--icon=icon/DS_capture.ico",
         "--add-data=icon/DS_capture.ico;icon",
+        "--add-data=DASAN Technology Safety logo.png;.",
         f"--name=DS Capture",
         f"--distpath={target_dir}",
         py_file

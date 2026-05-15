@@ -31,6 +31,7 @@ class MainApp:
     def __init__(self, license_data=None):
         self.license_data = license_data or {}
         self.root = tk.Tk()
+        self.root.withdraw() # 초기화 중 빈 하얀 창 방지
         set_window_icon(self.root)
         
         user_info = self.license_data.get('user_name', 'Free User')
@@ -45,7 +46,7 @@ class MainApp:
         except:
             self.scale_factor = 1.0
             
-        win_w = int(580 * self.scale_factor)
+        win_w = int(510 * self.scale_factor)
         win_h = int(480 * self.scale_factor)
         self.root.geometry(f"{win_w}x{win_h}")
         self.root.minsize(win_w, win_h)
@@ -60,6 +61,15 @@ class MainApp:
         self.close_action = "tray"
         
         self.load_config()
+
+        # 저장된 위치가 있으면 적용, 없으면 중앙 배치
+        if hasattr(self, 'saved_win_x') and self.saved_win_x is not None:
+            self.root.geometry(f"+{self.saved_win_x}+{self.saved_win_y}")
+        else:
+            # 기본 중앙 배치 (기존 로직 유지 가능 또는 직접 계산)
+            pos_x = (self.sw - win_w) // 2
+            pos_y = (self.sh - win_h) // 2
+            self.root.geometry(f"+{pos_x}+{pos_y}")
         self.root.bind("<Escape>", self._on_esc_main)
 
         if not os.path.exists(CONFIG_FILE):
@@ -70,7 +80,7 @@ class MainApp:
         self.main_container = tk.Frame(self.root)
         self.main_container.pack(fill=tk.BOTH, expand=True)
 
-        self.left_frame = tk.Frame(self.main_container, width=int(360 * self.scale_factor))
+        self.left_frame = tk.Frame(self.main_container, width=int(290 * self.scale_factor))
         self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
         self.left_frame.pack_propagate(False)
 
@@ -149,7 +159,8 @@ class MainApp:
         
         # 로고 영역 (왼쪽)
         try:
-            logo_path = os.path.join(BASE_DIR, "DASAN Technology Safety logo.png")
+            from core.utils import get_resource_path
+            logo_path = get_resource_path("DASAN Technology Safety logo.png")
             if os.path.exists(logo_path):
                 logo_img = Image.open(logo_path)
                 target_w = int(35 * self.scale_factor)
@@ -173,8 +184,8 @@ class MainApp:
         self.update_thumbnails()
         self.create_tray_icon()
         
-        if self.is_startup:
-            self.root.withdraw()
+        if not self.is_startup:
+            self.root.deiconify()
 
         # 창이 포커스를 받을 때 목록 갱신 (리소스 절약 및 에디터 저장 결과 반영)
         self.root.bind("<FocusIn>", lambda e: self.refresh_recent_list())
@@ -209,7 +220,27 @@ class MainApp:
         self.settings_win = pop
         pop.title("환경설정 (Settings)")
         set_window_icon(pop)
-        pop.geometry(f"{int(400 * self.scale_factor)}x{int(540 * self.scale_factor)}")
+        # 메인 윈도우 중앙에 배치하기 위한 좌표 계산
+        pop_w = int(400 * self.scale_factor)
+        pop_h = int(540 * self.scale_factor)
+        
+        # 메인 윈도우의 현재 위치와 크기 가져오기
+        self.root.update_idletasks()
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+        main_w = self.root.winfo_width()
+        main_h = self.root.winfo_height()
+        
+        # 기본적으로 메인 윈도우의 중앙에 배치
+        pos_x = main_x + (main_w - pop_w) // 2
+        pos_y = main_y + (main_h - pop_h) // 2
+        
+        # 단, 메인 윈도우가 화면 최상단에 있어 중앙 정렬 시 상단이 잘릴 경우 상단 정렬 방식 적용
+        if pos_y < 0:
+            pos_y = main_y + int(30 * self.scale_factor)
+            if pos_y < 0: pos_y = 0 # 최종 보정
+        
+        pop.geometry(f"{pop_w}x{pop_h}+{pos_x}+{pos_y}")
         pop.attributes("-topmost", False)
         pop.config(bg="#1e272e")
         
@@ -243,9 +274,9 @@ class MainApp:
         tk.Label(btn_con, text="저장 방식", bg="#1e272e", fg="#a4b0be", font=("Malgun Gothic", 9, "bold")).pack(pady=(15, 0), anchor="w")
         mode_f = tk.Frame(btn_con, bg="#1e272e")
         mode_f.pack(fill=tk.X, pady=(5, 0))
-        self.btn_save_both = tk.Button(mode_f, text="파일로 저장", command=lambda: self.set_save_mode("both"), bg="#00d2d3", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
+        self.btn_save_both = tk.Button(mode_f, text="파일저장+클립보드", command=lambda: self.set_save_mode("both"), bg="#00d2d3", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_save_both.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        self.btn_save_clip = tk.Button(mode_f, text="클립보드만", command=lambda: self.set_save_mode("clipboard"), bg="#4b6584", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
+        self.btn_save_clip = tk.Button(mode_f, text="클립보드", command=lambda: self.set_save_mode("clipboard"), bg="#4b6584", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_save_clip.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
         tk.Label(btn_con, text="닫기 버튼 동작", bg="#1e272e", fg="#a4b0be", font=("Malgun Gothic", 9, "bold")).pack(pady=(15, 0), anchor="w")
@@ -263,9 +294,6 @@ class MainApp:
         self.btn_startup_on.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         self.btn_startup_off = tk.Button(startup_f, text="자동실행 끔", command=lambda: self.set_startup(False), bg="#00d2d3", fg="white", font=("Malgun Gothic", 9, "bold"), pady=8, bd=0, width=12, cursor="hand2")
         self.btn_startup_off.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
-
-        tk.Label(pop, text=f"Version {BUILD_VERSION} (Build: {BUILD_DATE})", 
-                 bg="#1e272e", fg="#57606f", font=("Malgun Gothic", 8)).pack(side=tk.BOTTOM, pady=10)
 
         self.update_format_buttons()
         self.update_save_mode_buttons()
@@ -295,7 +323,9 @@ class MainApp:
                 "box_height": self.ent_h.get() if hasattr(self, 'ent_h') else getattr(self, 'saved_box_height', "600"),
                 "drag_ratio": self.drag_ratio_var.get() if hasattr(self, 'drag_ratio_var') else getattr(self, 'saved_drag_ratio', "4:3 비율"),
                 "save_mode": getattr(self, 'save_mode', 'both'),
-                "recent_captures": self.recent_captures[:100]
+                "recent_captures": self.recent_captures[:100],
+                "win_x": self.root.winfo_x(),
+                "win_y": self.root.winfo_y()
             }
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(config, f, ensure_ascii=False, indent=4)
@@ -318,6 +348,8 @@ class MainApp:
                     self.saved_drag_ratio = config.get("drag_ratio", "4:3 비율")
                     self.close_action = config.get("close_action", "tray")
                     self.save_mode = config.get("save_mode", "both")
+                    self.saved_win_x = config.get("win_x")
+                    self.saved_win_y = config.get("win_y")
                     
                     saved_recent = config.get("recent_captures", [])
                     self.recent_captures = [fp for fp in saved_recent if os.path.exists(fp)][:100]
@@ -409,45 +441,64 @@ class MainApp:
             self.btn_startup_off.config(bg="#00d2d3" if not is_on else "#4b6584")
 
     def _on_esc_main(self, event):
+        # 팝업창(Toplevel)이 떠 있는 경우에는 해당 창이 닫히도록 'break'만 반환
         for child in self.root.winfo_children():
             if isinstance(child, tk.Toplevel) and child.winfo_exists() and child.winfo_viewable():
                 return "break"
-        if event.widget == self.root:
-            self.on_close_window()
+        # 메인 윈도우 자체는 Esc로 닫히지 않도록 수정
         return "break"
 
     def set_save_location(self):
-        d = filedialog.askdirectory(initialdir=self.save_dir)
+        # 환경설정 창이 있으면 부모로 지정하여 포커스 문제 방지
+        parent = self.settings_win if hasattr(self, 'settings_win') and self.settings_win.winfo_exists() else self.root
+        d = filedialog.askdirectory(initialdir=self.save_dir, parent=parent)
         if d: 
             self.save_dir = d
             self.update_open_folder_button_text() # 환경설정 창 내 버튼 텍스트 갱신
+            self.refresh_recent_list() # 새로운 경로의 파일들로 썸네일 즉시 갱신
             self.save_config()
+        
+        # 다이얼로그가 닫힌 후 다시 환경설정 창을 최상단으로 올림
+        if hasattr(self, 'settings_win') and self.settings_win.winfo_exists():
+            self.settings_win.lift()
+            self.settings_win.focus_force()
 
     def update_open_folder_button_text(self):
         """환경설정 창의 폴더 열기 버튼 텍스트를 현재 전체 경로(축약형)로 업데이트"""
         if hasattr(self, 'btn_open_folder') and self.btn_open_folder.winfo_exists():
             full_path = self.save_dir
             short_path = self.shorten_path(full_path, max_len=35)
-            self.btn_open_folder.config(text=f"[{short_path}] 열기")
+            self.btn_open_folder.config(text=f"저장 위치 [{short_path}] 열기")
 
     def shorten_path(self, path, max_len=40):
-        r"""경로가 너무 길면 중간을 생략 (예: C:\...\Folder)"""
+        r"""드라이브명, 최초 폴더, 최종 폴더를 우선 노출 (예: C:\First\...\Final)"""
+        if not path: return ""
         if len(path) <= max_len:
             return path
         
-        # 드라이브 문자와 폴더명 분리
-        parts = path.split(os.sep)
-        if len(parts) < 3:
-            return path[:max_len-3] + "..."
-            
-        start = parts[0] + os.sep + parts[1]
-        end = parts[-1]
+        normalized_path = path.replace('/', os.sep).replace('\\', os.sep)
+        parts = [p for p in normalized_path.split(os.sep) if p]
         
-        mid_len = max_len - len(start) - len(end) - 5
-        if mid_len > 0:
-            return f"{start}{os.sep}...{os.sep}{end}"
+        if len(parts) <= 2:
+            return path[-max_len:] if len(path) > max_len else path
+            
+        drive = parts[0] + os.sep
+        first_folder = parts[1]
+        final_folder = parts[-1]
+        
+        # 기본 형태: 드라이브\첫폴더\...\마지막폴더
+        if len(parts) > 3:
+            res = f"{drive}{first_folder}{os.sep}...{os.sep}{final_folder}"
         else:
-            return f"{start[:10]}...{end}"
+            # 폴더가 3개뿐인 경우 (C:\A\B)
+            res = f"{drive}{first_folder}{os.sep}{final_folder}"
+            
+        # 만약 이 결과도 너무 길면 드라이브와 마지막 폴더 위주로 더 줄임
+        if len(res) > max_len:
+            available = max_len - len(drive) - 5
+            return f"{drive}...{os.sep}{final_folder[-available:]}" if available > 5 else f"{drive}...{final_folder[-10:]}"
+            
+        return res
 
     def popup_shortcut_settings(self):
         pop = tk.Toplevel(self.root)
@@ -808,9 +859,20 @@ class MainApp:
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="이미지 수정", command=lambda: self.on_thumbnail_dblclick(filepath))
         menu.add_separator()
+        menu.add_command(label="파일 위치 열기", command=lambda: self._open_file_location(filepath))
         menu.add_command(label="다른 이름으로 저장", command=lambda: self._save_thumbnail_as(filepath))
         menu.add_command(label="삭제", command=lambda: self._delete_thumbnail(filepath))
         menu.tk_popup(event.x_root, event.y_root)
+
+    def _open_file_location(self, filepath):
+        """윈도우 탐색기를 열어 해당 파일의 위치를 표시하고 파일을 선택함"""
+        if not os.path.exists(filepath): return
+        try:
+            # explorer /select, "경로" 형식을 사용하여 파일 선택 상태로 탐색기 열기
+            path = os.path.normpath(filepath)
+            subprocess.run(['explorer', '/select,', path])
+        except Exception as e:
+            messagebox.showerror("오류", f"폴더를 열 수 없습니다: {e}")
 
     def _save_thumbnail_as(self, filepath):
         if not os.path.exists(filepath): return

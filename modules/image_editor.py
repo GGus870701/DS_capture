@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QPixmap, QImage, QPainter, QPen, QColor, QBrush, 
     QIcon, QAction, QFont, QCursor, QKeySequence,
-    QMouseEvent
+    QMouseEvent, QTransform
 )
 from PySide6.QtCore import (
     Qt, QPoint, QRect, QRectF, QSize, QByteArray, QEvent,
@@ -46,7 +46,9 @@ SVG_ICONS = {
     "save_as": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>',
     "zoom_extents": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>',
     "fill": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>',
-    "copy": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>'
+    "copy": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
+    "rotate": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>',
+    "rotate_ccw": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"></path><path d="M3.51 15a9 9 0 1 0 2.12-9.36L1 10"></path></svg>'
 }
 
 def get_svg_icon(name, color="#d2dae2"):
@@ -65,6 +67,14 @@ def get_svg_icon(name, color="#d2dae2"):
 STYLE_SHEET = """
 QMainWindow {
     background-color: #1e272e;
+}
+QToolTip {
+    background-color: #2f3542;
+    color: white;
+    border: 1px solid #3d3d3d;
+    font-family: 'Malgun Gothic';
+    font-size: 13px;
+    padding: 4px;
 }
 QToolBar {
     background-color: #2f3640;
@@ -336,6 +346,10 @@ class DrawingCanvas(QGraphicsView):
         delta = new_scene_pos - old_scene_pos
         self.translate(delta.x(), delta.y())
         
+        # 수동 줌 조절 시 자동 맞춤 모드 해제
+        if hasattr(self.window(), 'zoom_mode'):
+            self.window().zoom_mode = 'manual'
+            
         self._update_zoom_label()
 
     def mousePressEvent(self, event):
@@ -406,6 +420,11 @@ class DrawingCanvas(QGraphicsView):
                 
             self._push_undo()
             
+            # 수정 상태 업데이트 (그리기 도구 사용 시)
+            if self.current_tool != "crop": # 자르기는 별도 함수에서 처리
+                if hasattr(self.window(), 'is_modified'):
+                    self.window().is_modified = True
+            
     def _get_final_drawing_pixmap(self, end_point, modifiers):
         # mouseMove의 preview 로직과 동일하게 최종본 생성
         final = self.temp_pixmap.copy()
@@ -435,11 +454,23 @@ class DrawingCanvas(QGraphicsView):
         elif t == "arrow": self._draw_arrow(painter, start, end)
         elif t == "rect":
             rect = QRect(start, end).normalized()
-            if self.is_fill: painter.fillRect(rect, self.fill_color)
+            # 사각형은 모서리를 각지게 처리
+            pen.setJoinStyle(Qt.MiterJoin)
+            pen.setCapStyle(Qt.SquareCap)
+            painter.setPen(pen)
+            
+            if self.is_fill:
+                # 선 색상과 면 색상이 같으면 테두리 없이 면만 채워 경계면 문제 해결
+                if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
+                    painter.setPen(Qt.NoPen)
+                painter.fillRect(rect, self.fill_color)
             painter.drawRect(rect)
         elif t == "ellipse":
             rect = QRect(start, end).normalized()
-            if self.is_fill: painter.setBrush(QBrush(self.fill_color))
+            if self.is_fill:
+                if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
+                    painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(self.fill_color))
             painter.drawEllipse(rect)
         painter.end()
         return final
@@ -511,11 +542,22 @@ class DrawingCanvas(QGraphicsView):
             self._draw_arrow(painter, start, end)
         elif self.current_tool == "rect":
             rect = QRect(start, end).normalized()
-            if self.is_fill: painter.fillRect(rect, self.fill_color)
+            # 사각형은 모서리를 각지게 처리
+            pen.setJoinStyle(Qt.MiterJoin)
+            pen.setCapStyle(Qt.SquareCap)
+            painter.setPen(pen)
+            
+            if self.is_fill:
+                if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
+                    painter.setPen(Qt.NoPen)
+                painter.fillRect(rect, self.fill_color)
             painter.drawRect(rect)
         elif self.current_tool == "ellipse":
             rect = QRect(start, end).normalized()
-            if self.is_fill: painter.setBrush(QBrush(self.fill_color))
+            if self.is_fill:
+                if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
+                    painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(self.fill_color))
             painter.drawEllipse(rect)
         elif self.current_tool == "mosaic":
             rect = QRect(start, end).normalized()
@@ -563,6 +605,8 @@ class DrawingCanvas(QGraphicsView):
         
         cropped = pixmap.copy(target_rect)
         self.image_item.setPixmap(cropped)
+        if hasattr(self.window(), 'is_modified'):
+            self.window().is_modified = True
         
         # 자르기 후에도 여백 재설정
         r = cropped.boundingRect()
@@ -571,16 +615,23 @@ class DrawingCanvas(QGraphicsView):
         self.scene().setSceneRect(r.adjusted(-margin_w, -margin_h, margin_w, margin_h))
         
         # 잘라내기 후 중앙 정렬을 위해 부모에게 알림 (옵션)
-        if hasattr(self.window(), 'center_canvas'):
-            self.window().center_canvas()
+        if hasattr(self.window(), 'toggle_zoom'):
+            self.window().toggle_zoom()
 
     def _draw_arrow(self, painter, start, end):
         painter.drawLine(start, end)
         angle = math.atan2(end.y() - start.y(), end.x() - start.x())
         size = self.pen_width * 4
-        arrow_p1 = end - QPoint(size * math.cos(angle - math.pi/6), size * math.sin(angle - math.pi/6))
-        arrow_p2 = end - QPoint(size * math.cos(angle + math.pi/6), size * math.sin(angle + math.pi/6))
+        
+        # 화살표 머리 지점 계산
+        arrow_p1 = end - QPoint(int(size * math.cos(angle - math.pi/6)), int(size * math.sin(angle - math.pi/6)))
+        arrow_p2 = end - QPoint(int(size * math.cos(angle + math.pi/6)), int(size * math.sin(angle + math.pi/6)))
+        
+        # 삼각형 내부 채우기 설정
+        old_brush = painter.brush()
+        painter.setBrush(QBrush(painter.pen().color()))
         painter.drawPolygon([end, arrow_p1, arrow_p2])
+        painter.setBrush(old_brush) # 브러시 상태 복구
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space and not event.isAutoRepeat():
@@ -616,6 +667,8 @@ class ImageEditor(QMainWindow):
         set_qt_window_icon(self)
         self.setStyleSheet(STYLE_SHEET)
         
+        self._init_custom_colors()
+        self.is_modified = False # 수정 여부 플래그
         self.canvas = DrawingCanvas()
         self.setCentralWidget(self.canvas)
         
@@ -627,14 +680,24 @@ class ImageEditor(QMainWindow):
         self.fit_btn.setFixedSize(38, 38)
         self.fit_btn.setToolTip("화면 맞춤 (F)")
         self.fit_btn.setCursor(Qt.PointingHandCursor)
-        self.fit_btn.clicked.connect(self.center_canvas)
-        # 초기 위치는 resizeEvent에서 조정됨
-        
+        self.fit_btn.clicked.connect(self.toggle_zoom)
+        self.zoom_mode = 'fit'  # 'fit' 또는 'original'
         self._init_ui()
         self.canvas.load_image(filepath)
         
-        self.resize(1100, 800)
+        self.resize(1400, 900)
         self.statusBar().showMessage("준비 완료")
+
+    def _init_custom_colors(self):
+        """그림판 스타일의 표준 색상 팔레트 설정"""
+        palette = [
+            "#000000", "#7F7F7F", "#880015", "#ED1C24", "#FF7F27", "#FFF200", "#22B14C", "#00A2E8", "#3F48CC", "#A349A4",
+            "#FFFFFF", "#C3C3C3", "#B97A57", "#FFAEC9", "#FFC90E", "#EFE4B0", "#B5E61D", "#99D9EA", "#7092BE", "#C8BFE7",
+            "#0E1111", "#232B2B", "#353839", "#414A4C", "#3B444B", "#2F4F4F", "#002147", "#191970", "#000080", "#003366"
+        ]
+        for i, hex_val in enumerate(palette):
+            if i < 48: # Qt 커스텀 컬러 슬롯은 48개
+                QColorDialog.setCustomColor(i, QColor(hex_val))
         
     def _init_ui(self):
         toolbar = QToolBar("메인 도구")
@@ -642,44 +705,7 @@ class ImageEditor(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         
-        tools = [
-            ("pen", "펜", "자유롭게 그리기 (Shift: 직선)", "pen"),
-            ("line", "직선", "직선 그리기", "line"),
-            ("arrow", "화살표", "화살표 그리기", "arrow"),
-            ("rect", "사각형", "사각형 그리기", "rect"),
-            ("ellipse", "원", "원 그리기", "ellipse"),
-            ("highlight", "형광펜", "반투명 형광펜 (수직 고정)", "highlight"),
-            ("mosaic", "모자이크", "영역 모자이크 처리", "mosaic"),
-            ("text", "텍스트", "글자 입력", "text"),
-            ("crop", "자르기", "이미지 자르기", "crop")
-        ]
-        
-        self.tool_actions = {}
-        for tool_id, name, help_text, icon_key in tools:
-            action = QAction(get_svg_icon(icon_key), name, self)
-            action.setCheckable(True)
-            action.setToolTip(name)
-            action.setStatusTip(help_text)
-            action.triggered.connect(lambda checked, t=tool_id: self.set_tool(t))
-            toolbar.addAction(action)
-            self.tool_actions[tool_id] = action
-
-        self.tool_actions["pen"].setChecked(True)
-
-        toolbar.addSeparator()
-        
-        undo_act = QAction(get_svg_icon("undo"), "실행 취소", self)
-        undo_act.setShortcut(QKeySequence.Undo)
-        undo_act.triggered.connect(self.canvas.undo)
-        toolbar.addAction(undo_act)
-        
-        redo_act = QAction(get_svg_icon("redo"), "재실행", self)
-        redo_act.setShortcut(QKeySequence.Redo)
-        redo_act.triggered.connect(self.canvas.redo)
-        toolbar.addAction(redo_act)
-        
-        toolbar.addSeparator()
-        
+        # [그룹 1: 저장 및 복사]
         save_act = QAction(get_svg_icon("save"), "저장 (SAVE)", self)
         save_act.setShortcut(QKeySequence.Save)
         save_act.setStatusTip("원본_mod 형식으로 같은 폴더에 저장합니다.")
@@ -691,12 +717,72 @@ class ImageEditor(QMainWindow):
         save_as_act.triggered.connect(self.save_as_image)
         toolbar.addAction(save_as_act)
         
-        copy_act = QAction(get_svg_icon("copy"), "클립보드 복사", self)
+        copy_act = QAction(get_svg_icon("copy"), "클립보드 복사 (Ctrl+C)", self)
         copy_act.setShortcut(QKeySequence.Copy)
-        copy_act.setStatusTip("현재 이미지를 클립보드에 복사합니다. (Ctrl+C)")
+        copy_act.setStatusTip("현재 이미지를 클립보드에 복사합니다(Ctrl+C).")
         copy_act.triggered.connect(self.copy_to_clipboard)
         toolbar.addAction(copy_act)
         
+        toolbar.addSeparator()
+
+        # [그룹 2: 실행 취소 및 재실행]
+        undo_act = QAction(get_svg_icon("undo"), "실행 취소", self)
+        undo_act.setShortcut(QKeySequence.Undo)
+        undo_act.triggered.connect(self.canvas.undo)
+        toolbar.addAction(undo_act)
+        
+        redo_act = QAction(get_svg_icon("redo"), "재실행", self)
+        redo_act.setShortcut(QKeySequence.Redo)
+        redo_act.triggered.connect(self.canvas.redo)
+        toolbar.addAction(redo_act)
+        
+        toolbar.addSeparator()
+
+        # [그룹 3: 그리기 도구]
+        tools = [
+            ("pen", "펜", "자유롭게 그리기 (Shift: 직선)", "pen"),
+            ("line", "직선", "직선 그리기", "line"),
+            ("arrow", "화살표", "화살표 그리기 (선 두께 조정 시 머리 크기 조정)", "arrow"),
+            ("rect", "사각형", "사각형 그리기", "rect"),
+            ("ellipse", "원", "원 그리기", "ellipse"),
+            ("highlight", "형광펜", "반투명 형광펜 (수직 고정)", "highlight"),
+            ("mosaic", "모자이크", "영역 모자이크 처리", "mosaic"),
+            ("text", "텍스트", "글자 입력", "text")
+        ]
+
+        self.tool_actions = {}
+        for tool_id, name, help_text, icon_key in tools:
+            action = QAction(get_svg_icon(icon_key), name, self)
+            action.setCheckable(True)
+            action.setToolTip(name)
+            action.setStatusTip(help_text)
+            action.triggered.connect(lambda checked, t=tool_id: self.set_tool(t))
+            toolbar.addAction(action)
+            self.tool_actions[tool_id] = action
+
+        self.tool_actions["pen"].setChecked(True)
+        
+        toolbar.addSeparator()
+
+        # [변형 도구 그룹]
+        crop_action = QAction(get_svg_icon("crop"), "자르기", self)
+        crop_action.setCheckable(True)
+        crop_action.setToolTip("이미지 자르기")
+        crop_action.setStatusTip("이미지 자르기")
+        crop_action.triggered.connect(lambda checked: self.set_tool("crop"))
+        toolbar.addAction(crop_action)
+        self.tool_actions["crop"] = crop_action
+        
+        rotate_ccw_act = QAction(get_svg_icon("rotate_ccw"), "왼쪽 90도 회전", self)
+        rotate_ccw_act.setStatusTip("이미지를 반시계 방향으로 90도 회전합니다.")
+        rotate_ccw_act.triggered.connect(lambda: self.rotate_image(-90))
+        toolbar.addAction(rotate_ccw_act)
+        
+        rotate_cw_act = QAction(get_svg_icon("rotate"), "오른쪽 90도 회전", self)
+        rotate_cw_act.setStatusTip("이미지를 시계 방향으로 90도 회전합니다.")
+        rotate_cw_act.triggered.connect(lambda: self.rotate_image(90))
+        toolbar.addAction(rotate_cw_act)
+
         toolbar.addSeparator()
         
         # 선 두께 설정
@@ -780,6 +866,14 @@ class ImageEditor(QMainWindow):
         self.canvas.is_fill = checked
         self.fill_color_btn.setEnabled(checked)
         self.alpha_spin.setEnabled(checked)
+        
+        if checked:
+            # 체크 시 선 색상을 채우기 색상으로 자동 매칭 (알파값은 현재 스핀박스 값 유지)
+            new_fill_color = QColor(self.canvas.pen_color)
+            alpha = int(self.alpha_spin.value() / 100 * 255)
+            new_fill_color.setAlpha(alpha)
+            self.canvas.fill_color = new_fill_color
+            
         border = "white" if checked else "#555"
         self.fill_color_btn.setStyleSheet(f"background-color: {self.canvas.fill_color.name(QColor.HexArgb)}; border: 2px solid {border}; border-radius: 4px;")
 
@@ -817,6 +911,40 @@ class ImageEditor(QMainWindow):
     def update_status_pos(self, x, y):
         self.statusBar().showMessage(f"좌표: ({x}, {y})")
 
+    def rotate_image(self, angle):
+        """이미지를 회전 (angle: 90이면 시계방향, -90이면 반시계방향)"""
+        if not self.canvas.image_item or self.canvas.image_item.pixmap().isNull():
+            return
+            
+        # 1. 현재 픽스맵 가져오기
+        pixmap = self.canvas.image_item.pixmap()
+        
+        # 2. 회전 적용
+        transform = QTransform().rotate(angle)
+        rotated_pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
+        
+        # 3. 캔버스 업데이트
+        self.canvas.image_item.setPixmap(rotated_pixmap)
+        
+        # 4. 씬 영역 재설정 (이미지 크기가 변했으므로 여백 포함 재계산)
+        r = self.canvas.image_item.boundingRect()
+        margin_w = r.width()
+        margin_h = r.height()
+        self.canvas.scene().setSceneRect(r.adjusted(-margin_w, -margin_h, margin_w, margin_h))
+        
+        # 5. Undo 스택에 추가 및 수정 상태 업데이트
+        self.canvas._push_undo()
+        self.is_modified = True
+        
+        # 6. 회전 후 항상 화면 맞춤(Fit) 적용 및 중앙 정렬
+        self.canvas.fitInView(self.canvas.image_item.boundingRect(), Qt.KeepAspectRatio)
+        self.canvas.centerOn(self.canvas.image_item)
+        self.zoom_mode = 'fit'
+        self.canvas._update_zoom_label()
+            
+        direction = "시계 방향" if angle > 0 else "반시계 방향"
+        self.statusBar().showMessage(f"{direction} 90도 회전 완료", 2000)
+
     def save_image(self):
         # settings.json에서 최신 저장 경로 불러오기
         save_dir = os.path.dirname(self.filepath)
@@ -848,6 +976,7 @@ class ImageEditor(QMainWindow):
 
         self.canvas.get_current_pixmap().save(target_path)
         QMessageBox.information(self, "저장 완료", f"이미지가 저장되었습니다:\n{new_name}")
+        self.is_modified = False
 
     def save_as_image(self):
         # 최신 저장 경로를 초기 디렉토리로 설정
@@ -865,6 +994,7 @@ class ImageEditor(QMainWindow):
             self.canvas.get_current_pixmap().save(path)
             self.filepath = path
             self.setWindowTitle(f"DS 이미지 편집기 - {os.path.basename(path)}")
+            self.is_modified = False
 
     def copy_to_clipboard(self):
         """현재 캔버스의 이미지를 클립보드에 표준 DIB 형식으로 복사"""
@@ -894,29 +1024,43 @@ class ImageEditor(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "복사 실패", f"클립보드에 복사할 수 없습니다: {e}")
 
-    def center_canvas(self):
-        """이미지를 현재 창 크기에 맞춤 (Zoom Extents)"""
+    def toggle_zoom(self):
+        """화면 맞춤(Fit)과 100% 배율을 토글함"""
         if not self.canvas.image_item or self.canvas.image_item.pixmap().isNull():
             return
-        
-        # 이미지 영역(BoundingRect)을 기준으로 뷰에 맞춤
-        # fitInView는 내부적으로 scale과 centerOn을 수행하지만, 
-        # NoAnchor 설정 시 추가 보정이 필요할 수 있음
-        self.canvas.fitInView(self.canvas.image_item.boundingRect(), Qt.KeepAspectRatio)
-        
-        # 확실한 중앙 정렬을 위해 아이콘/아이템 자체를 기준으로 centerOn 재호출
-        self.canvas.centerOn(self.canvas.image_item)
+            
+        # 상태에 따른 토글
+        if self.zoom_mode == 'fit':
+            # 현재 화면 맞춤 상태라면 -> 100% 배율로
+            self.canvas.resetTransform()
+            self.canvas.centerOn(self.canvas.image_item)
+            self.zoom_mode = 'original'
+            self.statusBar().showMessage("배율: 100%", 2000)
+        else:
+            # 그 외의 경우(100% 상태거나 수동 조절 중) -> 화면 맞춤으로
+            self.canvas.fitInView(self.canvas.image_item.boundingRect(), Qt.KeepAspectRatio)
+            self.canvas.centerOn(self.canvas.image_item)
+            self.zoom_mode = 'fit'
+            self.statusBar().showMessage("화면 맞춤 적용됨", 2000)
+            
         self.canvas._update_zoom_label()
 
     def showEvent(self, event):
         super().showEvent(event)
-        # 창이 완전히 뜬 후 중앙 정렬 수행
-        self.center_canvas()
+        # 창이 완전히 뜬 후 화면 맞춤 수행
+        if not self.canvas.image_item.pixmap().isNull():
+            self.canvas.fitInView(self.canvas.image_item.boundingRect(), Qt.KeepAspectRatio)
+            self.canvas.centerOn(self.canvas.image_item)
+            self.canvas._update_zoom_label()
+            self.zoom_mode = 'fit'
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # 창 크기 변경 시(최대화 포함) 이미지 맞춤 유지
-        self.center_canvas()
+        # 창 크기 변경 시(최대화 포함) 화면 맞춤 모드라면 계속 유지
+        if self.zoom_mode == 'fit' and not self.canvas.image_item.pixmap().isNull():
+            self.canvas.fitInView(self.canvas.image_item.boundingRect(), Qt.KeepAspectRatio)
+            self.canvas.centerOn(self.canvas.image_item)
+            self.canvas._update_zoom_label()
         
         # 플로팅 버튼 위치 조정 (우측 상단 닫기 버튼 아래 영역)
         if hasattr(self, 'fit_btn'):
@@ -933,9 +1077,25 @@ class ImageEditor(QMainWindow):
             return
         elif event.key() == Qt.Key_F:
             # 화면 맞춤 (Fit)
-            self.center_canvas()
+            self.toggle_zoom()
             return
         super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        """창을 닫을 때 수정 사항이 있으면 확인창 표시"""
+        if self.is_modified:
+            reply = QMessageBox.question(
+                self, '저장되지 않은 변경 사항',
+                "수정된 내용이 있습니다. 저장하지 않고 종료하시겠습니까?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+
+            if reply == QMessageBox.Yes:
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()
 
     def keyReleaseEvent(self, event):
         if event.key() == Qt.Key_Space:
