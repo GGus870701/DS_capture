@@ -675,6 +675,8 @@ class ImageEditor(QMainWindow):
         save_act.triggered.connect(self.save_image)
         toolbar.addAction(save_act)
         
+        save_as_act = QAction(get_svg_icon("save_as"), "다른 이름으로 저장", self)
+        save_as_act.setStatusTip("다른 이름으로 이미지를 저장합니다.")
         save_as_act.triggered.connect(self.save_as_image)
         toolbar.addAction(save_as_act)
         

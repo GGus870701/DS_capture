@@ -3,9 +3,9 @@ import sys
 import ctypes
 
 # 빌드 정보
-BUILD_VERSION = "1.00.30"
+BUILD_VERSION = "1.00.31"
 BUILD_DATE = "2026-05-15"
-BUILD_TIME = "12:01:36"
+BUILD_TIME = "12:24:02"
 
 def get_base_dir():
     """실행 파일(EXE)이 위치한 실제 폴더 경로를 반환"""
