@@ -15,13 +15,13 @@ from PySide6.QtGui import (
     QMouseEvent
 )
 from PySide6.QtCore import (
-    Qt, QPoint, QRect, QSize, QByteArray, QEvent,
-    Signal
+    Qt, QPoint, QRect, QRectF, QSize, QByteArray, QEvent,
+    Signal, QBuffer, QIODevice
 )
 from PySide6.QtSvg import QSvgRenderer
 
-from core.utils import set_qt_window_icon, get_resource_path
-
+from core.utils import set_qt_window_icon, get_resource_path, CONFIG_FILE
+import json
 import io
 import ctypes
 import win32clipboard
@@ -597,6 +597,17 @@ class DrawingCanvas(QGraphicsView):
             self.setDragMode(QGraphicsView.NoDrag)
         super().keyReleaseEvent(event)
 
+    def get_current_pixmap(self):
+        """현재 화면에 보이는 최종 이미지를 렌더링하여 반환 (QPixmap 캐시 이슈 방지)"""
+        rect = self.image_item.boundingRect()
+        img = QImage(rect.size().toSize(), QImage.Format_ARGB32_Premultiplied)
+        img.fill(Qt.transparent)
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing)
+        self.scene().render(painter, QRectF(img.rect()), rect)
+        painter.end()
+        return QPixmap.fromImage(img)
+
 class ImageEditor(QMainWindow):
     def __init__(self, filepath):
         super().__init__()
@@ -807,8 +818,17 @@ class ImageEditor(QMainWindow):
         self.statusBar().showMessage(f"좌표: ({x}, {y})")
 
     def save_image(self):
+        # settings.json에서 최신 저장 경로 불러오기
+        save_dir = os.path.dirname(self.filepath)
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                    if config.get("save_dir"):
+                        save_dir = config.get("save_dir")
+        except: pass
+
         # 원본_mod 이름 생성 (이미 _mod인 경우 중복 방지)
-        dir_name = os.path.dirname(self.filepath)
         base_name, ext = os.path.splitext(os.path.basename(self.filepath))
         
         if base_name.endswith("_mod"):
@@ -816,7 +836,7 @@ class ImageEditor(QMainWindow):
         else:
             new_name = f"{base_name}_mod{ext}"
             
-        target_path = os.path.join(dir_name, new_name)
+        target_path = os.path.join(save_dir, new_name)
         
         # 덮어쓰기 확인
         if os.path.exists(target_path):
@@ -826,28 +846,44 @@ class ImageEditor(QMainWindow):
             if reply == QMessageBox.No:
                 return
 
-        self.canvas.image_item.pixmap().save(target_path)
+        self.canvas.get_current_pixmap().save(target_path)
         QMessageBox.information(self, "저장 완료", f"이미지가 저장되었습니다:\n{new_name}")
 
     def save_as_image(self):
-        path, _ = QFileDialog.getSaveFileName(self, "다른 이름으로 저장", self.filepath, "Images (*.png *.jpg *.bmp)")
+        # 최신 저장 경로를 초기 디렉토리로 설정
+        init_dir = os.path.dirname(self.filepath)
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                    if config.get("save_dir"):
+                        init_dir = config.get("save_dir")
+        except: pass
+
+        path, _ = QFileDialog.getSaveFileName(self, "다른 이름으로 저장", init_dir, "Images (*.png *.jpg *.bmp)")
         if path:
-            self.canvas.image_item.pixmap().save(path)
+            self.canvas.get_current_pixmap().save(path)
             self.filepath = path
             self.setWindowTitle(f"DS 이미지 편집기 - {os.path.basename(path)}")
 
     def copy_to_clipboard(self):
         """현재 캔버스의 이미지를 클립보드에 표준 DIB 형식으로 복사"""
-        pixmap = self.canvas.image_item.pixmap()
+        pixmap = self.canvas.get_current_pixmap()
         if pixmap.isNull(): return
         
-        # QPixmap -> 비트맵 데이터를 위해 메모리 버퍼 사용
-        img_buffer = io.BytesIO()
-        pixmap.toImage().save(img_buffer, "BMP")
+        # QPixmap -> 비트맵 데이터를 위해 메모리 버퍼 대신 임시 파일 사용 (PySide6 호환성 문제 방지)
+        import tempfile
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".bmp")
+        os.close(tmp_fd)
+        pixmap.toImage().save(tmp_path, "BMP")
         
-        # Windows 클립보드 API를 사용하여 비트맵 데이터 업로드
-        data = img_buffer.getvalue()[14:] # BMP 헤더 14바이트 제외
-        img_buffer.close()
+        with open(tmp_path, "rb") as f:
+            data = f.read()[14:] # BMP 헤더 14바이트 제외
+            
+        try:
+            os.remove(tmp_path)
+        except:
+            pass
         
         try:
             win32clipboard.OpenClipboard()
