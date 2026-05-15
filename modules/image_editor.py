@@ -82,6 +82,14 @@ QToolBar {
     spacing: 5px;
     padding: 5px;
 }
+QToolBar::separator {
+    background-color: #d2dae2;
+    width: 1px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    margin-left: 2px;
+    margin-right: 2px;
+}
 QToolButton {
     background-color: transparent;
     border-radius: 4px;
@@ -438,7 +446,7 @@ class DrawingCanvas(QGraphicsView):
         t = self.current_tool
         
         if t == "highlight":
-            alpha_color = self.pen_color
+            alpha_color = QColor(self.pen_color)
             alpha_color.setAlpha(51)
             pen.setColor(alpha_color)
             end.setY(start.y())
@@ -452,26 +460,34 @@ class DrawingCanvas(QGraphicsView):
             painter.drawLine(start, end)
         elif t == "line": painter.drawLine(start, end)
         elif t == "arrow": self._draw_arrow(painter, start, end)
-        elif t == "rect":
+        elif t == "rect" or t == "ellipse":
+            if modifiers & Qt.ShiftModifier:
+                diff = end - start
+                side = max(abs(diff.x()), abs(diff.y()))
+                end = QPoint(
+                    start.x() + (side if diff.x() >= 0 else -side),
+                    start.y() + (side if diff.y() >= 0 else -side)
+                )
             rect = QRect(start, end).normalized()
-            # 사각형은 모서리를 각지게 처리
-            pen.setJoinStyle(Qt.MiterJoin)
-            pen.setCapStyle(Qt.SquareCap)
-            painter.setPen(pen)
             
-            if self.is_fill:
-                # 선 색상과 면 색상이 같으면 테두리 없이 면만 채워 경계면 문제 해결
-                if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
-                    painter.setPen(Qt.NoPen)
-                painter.fillRect(rect, self.fill_color)
-            painter.drawRect(rect)
-        elif t == "ellipse":
-            rect = QRect(start, end).normalized()
-            if self.is_fill:
-                if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
-                    painter.setPen(Qt.NoPen)
-                painter.setBrush(QBrush(self.fill_color))
-            painter.drawEllipse(rect)
+            if t == "rect":
+                # 사각형은 모서리를 각지게 처리
+                pen.setJoinStyle(Qt.MiterJoin)
+                pen.setCapStyle(Qt.SquareCap)
+                painter.setPen(pen)
+                
+                if self.is_fill:
+                    # 선 색상과 면 색상이 같으면 테두리 없이 면만 채워 경계면 문제 해결
+                    if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
+                        painter.setPen(Qt.NoPen)
+                    painter.fillRect(rect, self.fill_color)
+                painter.drawRect(rect)
+            else: # ellipse
+                if self.is_fill:
+                    if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
+                        painter.setPen(Qt.NoPen)
+                    painter.setBrush(QBrush(self.fill_color))
+                painter.drawEllipse(rect)
         painter.end()
         return final
             
@@ -484,7 +500,7 @@ class DrawingCanvas(QGraphicsView):
         
         if self.current_tool == "highlight":
             # 형광펜은 고정 20% 투명도 (사용자 요청)
-            alpha_color = self.pen_color
+            alpha_color = QColor(self.pen_color)
             alpha_color.setAlpha(51) # 255 * 0.2 = 51
             pen.setColor(alpha_color)
             painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
@@ -517,7 +533,7 @@ class DrawingCanvas(QGraphicsView):
         
         pen = QPen(self.pen_color, self.pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
         if self.current_tool == "highlight":
-            alpha_color = self.pen_color
+            alpha_color = QColor(self.pen_color)
             alpha_color.setAlpha(51)
             pen.setColor(alpha_color)
             end_point.setY(self.start_point.y())
@@ -540,25 +556,33 @@ class DrawingCanvas(QGraphicsView):
             painter.drawLine(start, end)
         elif self.current_tool == "arrow":
             self._draw_arrow(painter, start, end)
-        elif self.current_tool == "rect":
+        elif self.current_tool == "rect" or self.current_tool == "ellipse":
+            if modifiers & Qt.ShiftModifier:
+                diff = end - start
+                side = max(abs(diff.x()), abs(diff.y()))
+                end = QPoint(
+                    start.x() + (side if diff.x() >= 0 else -side),
+                    start.y() + (side if diff.y() >= 0 else -side)
+                )
             rect = QRect(start, end).normalized()
-            # 사각형은 모서리를 각지게 처리
-            pen.setJoinStyle(Qt.MiterJoin)
-            pen.setCapStyle(Qt.SquareCap)
-            painter.setPen(pen)
             
-            if self.is_fill:
-                if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
-                    painter.setPen(Qt.NoPen)
-                painter.fillRect(rect, self.fill_color)
-            painter.drawRect(rect)
-        elif self.current_tool == "ellipse":
-            rect = QRect(start, end).normalized()
-            if self.is_fill:
-                if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
-                    painter.setPen(Qt.NoPen)
-                painter.setBrush(QBrush(self.fill_color))
-            painter.drawEllipse(rect)
+            if self.current_tool == "rect":
+                # 사각형은 모서리를 각지게 처리
+                pen.setJoinStyle(Qt.MiterJoin)
+                pen.setCapStyle(Qt.SquareCap)
+                painter.setPen(pen)
+                
+                if self.is_fill:
+                    if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
+                        painter.setPen(Qt.NoPen)
+                    painter.fillRect(rect, self.fill_color)
+                painter.drawRect(rect)
+            else: # ellipse
+                if self.is_fill:
+                    if self.pen_color.rgb() == self.fill_color.rgb() and self.fill_color.alpha() == 255:
+                        painter.setPen(Qt.NoPen)
+                    painter.setBrush(QBrush(self.fill_color))
+                painter.drawEllipse(rect)
         elif self.current_tool == "mosaic":
             rect = QRect(start, end).normalized()
             painter.setPen(QPen(Qt.white, 1, Qt.DashLine))
@@ -819,13 +843,13 @@ class ImageEditor(QMainWindow):
         self.fill_color_btn.mousePressEvent = lambda e: self._pick_color("fill")
         toolbar.addWidget(self.fill_color_btn)
         
-        toolbar.addSeparator()
-
         # 채우기 불투명도 설정
         toolbar.addWidget(QLabel(" 불투명도(%) "))
         self.alpha_spin = CustomSpinBox(0, 100, int(self.canvas.fill_color.alpha() / 255 * 100))
         self.alpha_spin.valueChanged.connect(self._change_alpha)
         toolbar.addWidget(self.alpha_spin)
+        
+        toolbar.addSeparator()
         
         self.statusBar().setStyleSheet("QStatusBar::item { border: None; }")
         
@@ -1047,12 +1071,23 @@ class ImageEditor(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # 창이 완전히 뜬 후 화면 맞춤 수행
+        # 창이 완전히 뜬 후 초기 줌 설정
         if not self.canvas.image_item.pixmap().isNull():
-            self.canvas.fitInView(self.canvas.image_item.boundingRect(), Qt.KeepAspectRatio)
+            pix_size = self.canvas.image_item.pixmap().size()
+            # 현재 화면의 가용 해상도 가져오기
+            screen = self.screen()
+            screen_size = screen.size() if screen else QSize(1920, 1080)
+            
+            # 이미지가 화면 해상도보다 크면 화면 맞춤(Fit), 작으면 100% 배율
+            if pix_size.width() > screen_size.width() or pix_size.height() > screen_size.height():
+                self.canvas.fitInView(self.canvas.image_item.boundingRect(), Qt.KeepAspectRatio)
+                self.zoom_mode = 'fit'
+            else:
+                self.canvas.resetTransform()
+                self.zoom_mode = 'original'
+                
             self.canvas.centerOn(self.canvas.image_item)
             self.canvas._update_zoom_label()
-            self.zoom_mode = 'fit'
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
