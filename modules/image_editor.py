@@ -83,12 +83,12 @@ QToolBar {
     padding: 5px;
 }
 QToolBar::separator {
-    background-color: #d2dae2;
+    background-color: #3d3d3d;
     width: 1px;
     margin-top: 4px;
     margin-bottom: 4px;
-    margin-left: 2px;
-    margin-right: 2px;
+    margin-left: 5px;
+    margin-right: 5px;
 }
 QToolButton {
     background-color: transparent;
@@ -420,10 +420,13 @@ class DrawingCanvas(QGraphicsView):
             if self.current_tool in ["line", "arrow", "rect", "ellipse"] or (self.current_tool == "pen" and event.modifiers() & Qt.ShiftModifier) or self.current_tool == "highlight":
                 self.image_item.setPixmap(self._get_final_drawing_pixmap(pos, event.modifiers()))
             elif self.current_tool == "mosaic":
+                self.image_item.setPixmap(self.temp_pixmap)
                 self._apply_mosaic(QRect(self.start_point, pos).normalized())
             elif self.current_tool == "text":
+                self.image_item.setPixmap(self.temp_pixmap)
                 self._add_text(self.start_point)
             elif self.current_tool == "crop":
+                self.image_item.setPixmap(self.temp_pixmap)
                 self._apply_crop(QRect(self.start_point, pos).normalized())
                 
             self._push_undo()
@@ -585,7 +588,7 @@ class DrawingCanvas(QGraphicsView):
                 painter.drawEllipse(rect)
         elif self.current_tool == "mosaic":
             rect = QRect(start, end).normalized()
-            painter.setPen(QPen(Qt.white, 1, Qt.DashLine))
+            painter.setPen(QPen(Qt.red, 2, Qt.DashLine))
             painter.drawRect(rect)
         elif self.current_tool == "crop":
             rect = QRect(start, end).normalized()
@@ -814,8 +817,6 @@ class ImageEditor(QMainWindow):
         self.width_spin = CustomSpinBox(1, 100, self.canvas.pen_width)
         self.width_spin.valueChanged.connect(self._change_width)
         toolbar.addWidget(self.width_spin)
-        
-        toolbar.addSeparator()
         
         # 선 색상 선택 버튼
         toolbar.addWidget(QLabel(" 선 색상 "))
