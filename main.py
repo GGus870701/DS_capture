@@ -2,8 +2,8 @@ import sys
 import ctypes
 import os
 import tkinter as tk
-from core.utils import set_window_icon, LICENSE_DIR, BASE_DIR
-from core import validator
+from core.utils import set_window_icon
+from license_core import check_license
 from ui.main_app import MainApp
 
 # Qt DPI 경고 숨기기 및 DPI 설정
@@ -64,7 +64,7 @@ def main_entry():
         sys.exit(0)
         
     # 3. 라이센스 유효성 검사
-    is_valid, lic_data = validator.check_license("DS_CAPTURE", set_window_icon)
+    is_valid, lic_data = check_license("DS_CAPTURE", set_window_icon)
     if is_valid:
         # 4. 메인 앱 실행
         app = MainApp(lic_data)

@@ -16,9 +16,9 @@ import keyboard
 import pystray
 from PIL import Image, ImageGrab, ImageTk, ImageEnhance
 from core.utils import (
-    BUILD_VERSION, BUILD_DATE, BUILD_TIME, BASE_DIR, 
-    CONFIG_FILE, LICENSE_DIR, get_resource_path, set_window_icon
+    BASE_DIR, CONFIG_FILE, LICENSE_DIR, get_resource_path, set_window_icon
 )
+from core.version import BUILD_VERSION, BUILD_DATE, BUILD_TIME
 from ui.resizable_box import ResizableBox
 
 # Windows API for clipboard
@@ -159,8 +159,11 @@ class MainApp:
         
         # 로고 영역 (왼쪽)
         try:
-            from core.utils import get_resource_path
-            logo_path = get_resource_path("DASAN Technology Safety logo.png")
+            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                logo_path = os.path.join(sys._MEIPASS, "DASAN_logo.png")
+            else:
+                logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
+                                         "build_core", "assets", "DASAN_logo.png")
             if os.path.exists(logo_path):
                 logo_img = Image.open(logo_path)
                 target_w = int(35 * self.scale_factor)
@@ -618,7 +621,7 @@ class MainApp:
 
     def create_tray_icon(self):
         try:
-            icon_path = get_resource_path("icon/DS_capture.ico")
+            icon_path = get_resource_path("assets/DS_capture.ico")
             if os.path.exists(icon_path):
                 raw_img = Image.open(icon_path).convert("RGBA")
                 bbox = raw_img.getbbox()

@@ -1,0 +1,4 @@
+# DS Capture - 빌드 정보 관리
+BUILD_VERSION = "1.00.45"
+BUILD_DATE = "2026-05-31"
+BUILD_TIME = "15:33:10"

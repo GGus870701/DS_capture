@@ -2,10 +2,6 @@ import os
 import sys
 import ctypes
 
-# 빌드 정보
-BUILD_VERSION = "1.00.40"
-BUILD_DATE = "2026-05-30"
-BUILD_TIME = "16:57:15"
 
 def get_base_dir():
     """실행 파일(EXE)이 위치한 실제 폴더 경로를 반환"""
@@ -29,7 +25,7 @@ def get_resource_path(relative_path):
 def set_window_icon(window):
     """모든 Toplevel/Tk 창에 아이콘 일괄 적용"""
     try:
-        ico_path = get_resource_path("icon/DS_capture.ico")
+        ico_path = get_resource_path("assets/DS_capture.ico")
         if os.path.exists(ico_path):
             window.iconbitmap(ico_path)
     except:
@@ -39,7 +35,7 @@ def set_qt_window_icon(window):
     """PySide6 윈도우에 아이콘 적용"""
     try:
         from PySide6.QtGui import QIcon
-        ico_path = get_resource_path("icon/DS_capture.ico")
+        ico_path = get_resource_path("assets/DS_capture.ico")
         if os.path.exists(ico_path):
             window.setWindowIcon(QIcon(ico_path))
     except:
