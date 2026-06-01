@@ -8,7 +8,12 @@ class ResizableBox(tk.Toplevel):
         self.on_capture = on_capture
         set_window_icon(self)
         self.top_bar_h = 40    
-        self.sw, self.sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        import ctypes
+        user32 = ctypes.windll.user32
+        self.v_x = user32.GetSystemMetrics(76)
+        self.v_y = user32.GetSystemMetrics(77)
+        self.sw = user32.GetSystemMetrics(78)
+        self.sh = user32.GetSystemMetrics(79)
         self.geometry(f"{width}x{height + self.top_bar_h}+200+200")
         self.overrideredirect(True)
         self.attributes("-topmost", True)
@@ -116,8 +121,8 @@ class ResizableBox(tk.Toplevel):
     def do_move(self, event):
         dx = event.x_root - self.rx
         dy = event.y_root - self.ry
-        x = max(0, min(self.sw - self.winfo_width(), self.wx + dx))
-        y = max(0, min(self.sh - self.winfo_height(), self.wy + dy))
+        x = max(self.v_x, min(self.v_x + self.sw - self.winfo_width(), self.wx + dx))
+        y = max(self.v_y, min(self.v_y + self.sh - self.winfo_height(), self.wy + dy))
         self.geometry(f"+{x}+{y}")
 
     def start_resize(self, event):
@@ -139,15 +144,15 @@ class ResizableBox(tk.Toplevel):
             return
 
         dx, dy = event.x_root - self.sx, event.y_root - self.sy
-        new_w = max(250, min(self.sw - self.winfo_x(), self.sww + dx))
+        new_w = max(250, min(self.v_x + self.sw - self.winfo_x(), self.sww + dx))
         if event.state & 0x0001:
             ratio = self.sww / (self.shh - self.top_bar_h)
             new_h = int((new_w / ratio) + self.top_bar_h)
-            if new_h > self.sh - self.winfo_y():
-                new_h = self.sh - self.winfo_y()
+            if new_h > self.v_y + self.sh - self.winfo_y():
+                new_h = self.v_y + self.sh - self.winfo_y()
                 new_w = int((new_h - self.top_bar_h) * ratio)
         else:
-            new_h = max(150, min(self.sh - self.winfo_y(), self.shh + dy))
+            new_h = max(150, min(self.v_y + self.sh - self.winfo_y(), self.shh + dy))
         self.geometry(f"{new_w}x{new_h}")
 
     def trigger_capture(self):

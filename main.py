@@ -10,8 +10,8 @@ from ui.main_app import MainApp
 os.environ["QT_LOGGING_RULES"] = "qt.qpa.window=false"
 
 try:
-    # Tkinter를 위해 DPI 인식 설정
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    # Tkinter를 위해 DPI 인식 설정 (Per-Monitor V2)
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
     try:
         ctypes.windll.user32.SetProcessDPIAware()

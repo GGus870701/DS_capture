@@ -55,7 +55,7 @@ class MainApp:
         
         self.save_dir = BASE_DIR
         self.save_format = "png"
-        self.shortcuts = {"fixed": None, "drag": None, "full": None}
+        self.shortcuts = {"fixed": None, "drag": None, "full": None, "paste": "ctrl+shift+v"}
         self.recent_captures = []
         self.thumbnail_images = []
         self.close_action = "tray"
@@ -345,7 +345,10 @@ class MainApp:
                     config = json.load(f)
                     self.save_dir = config.get("save_dir", self.save_dir)
                     self.save_format = config.get("save_format", self.save_format)
-                    self.shortcuts = config.get("shortcuts", self.shortcuts)
+                    loaded_shortcuts = config.get("shortcuts", {})
+                    self.shortcuts.update(loaded_shortcuts)
+                    if "paste" not in self.shortcuts:
+                        self.shortcuts["paste"] = "ctrl+shift+v"
                     self.saved_box_width = config.get("box_width", "800")
                     self.saved_box_height = config.get("box_height", "600")
                     self.saved_drag_ratio = config.get("drag_ratio", "4:3 비율")
@@ -369,12 +372,8 @@ class MainApp:
                 if mode == "fixed": keyboard.add_hotkey(hk_str, self.open_box)
                 elif mode == "drag": keyboard.add_hotkey(hk_str, self.start_drag)
                 elif mode == "full": keyboard.add_hotkey(hk_str, self.full_capture)
+                elif mode == "paste": keyboard.add_hotkey(hk_str, self.handle_explorer_paste, suppress=False)
             except: pass
-            
-        # 탐색기 이미지 붙여넣기 (Ctrl+Shift+V) 등록
-        try:
-            keyboard.add_hotkey('ctrl+shift+v', self.handle_explorer_paste, suppress=False)
-        except: pass
 
     def set_save_mode(self, mode):
         self.save_mode = mode
@@ -507,8 +506,8 @@ class MainApp:
         pop = tk.Toplevel(self.root)
         pop.title("단축키 설정")
         set_window_icon(pop)
-        pop.geometry("420x350")
-        modes = [("지정크기 캡처", "fixed"), ("자유 드래그", "drag"), ("전체화면 캡처", "full")]
+        pop.geometry("420x400")
+        modes = [("지정크기 캡처", "fixed"), ("자유 드래그", "drag"), ("전체화면 캡처", "full"), ("탐색기에 붙여넣기", "paste")]
         keys_list = [chr(i) for i in range(65, 91)] + [str(i) for i in range(10)] + [f"F{i}" for i in range(1, 13)]
         results = {}
         def reset_single_shortcut(config):
@@ -771,12 +770,18 @@ class MainApp:
         self.root.withdraw()
         self.root.update()
         time.sleep(0.2)
-        screen_img = ImageGrab.grab(bbox=(0, 0, self.sw, self.sh))
+        v_x = user32.GetSystemMetrics(76)
+        v_y = user32.GetSystemMetrics(77)
+        v_w = user32.GetSystemMetrics(78)
+        v_h = user32.GetSystemMetrics(79)
+        screen_img = ImageGrab.grab(all_screens=True)
         dark_img = ImageEnhance.Brightness(screen_img).enhance(0.8)
         ov = tk.Toplevel()
         ov.withdraw()
         set_window_icon(ov)
-        ov.attributes("-fullscreen", True, "-topmost", True)
+        ov.overrideredirect(True)
+        ov.geometry(f"{v_w}x{v_h}+{v_x}+{v_y}")
+        ov.attributes("-topmost", True)
         ov.config(bg="black")
         cv = tk.Canvas(ov, highlightthickness=0, cursor="none", bg="black")
         cv.pack(fill=tk.BOTH, expand=True)
@@ -786,14 +791,14 @@ class MainApp:
         ov.deiconify()
         ov.focus_force()
         rd = {"id": None, "tid": None, "tbg": None, "x": 0, "y": 0, "vline": None, "hline": None}
-        cv.create_rectangle(self.sw // 2 - 320, 15, self.sw // 2 + 320, 45, fill="#1e1e1e", outline="")
-        cv.create_text(self.sw // 2, 30, text="[Shift] 비율 고정    [Ctrl] 중앙 기준 드래그    [Ctrl+Shift] 중앙 기준+비율 고정    [ESC] 취소", fill="#f1c40f", font=("Malgun Gothic", 10, "bold"), anchor="center")
-        rd["vline"] = cv.create_line(-10, 0, -10, self.sh, fill="red", width=1.5)
-        rd["hline"] = cv.create_line(0, -10, self.sw, -10, fill="red", width=1.5)
+        cv.create_rectangle(v_w // 2 - 320, 15, v_w // 2 + 320, 45, fill="#1e1e1e", outline="")
+        cv.create_text(v_w // 2, 30, text="[Shift] 비율 고정    [Ctrl] 중앙 기준 드래그    [Ctrl+Shift] 중앙 기준+비율 고정    [ESC] 취소", fill="#f1c40f", font=("Malgun Gothic", 10, "bold"), anchor="center")
+        rd["vline"] = cv.create_line(-10, 0, -10, v_h, fill="red", width=1.5)
+        rd["hline"] = cv.create_line(0, -10, v_w, -10, fill="red", width=1.5)
         
         def on_hover(e):
-            cv.coords(rd["vline"], e.x, 0, e.x, self.sh)
-            cv.coords(rd["hline"], 0, e.y, self.sw, e.y)
+            cv.coords(rd["vline"], e.x, 0, e.x, v_h)
+            cv.coords(rd["hline"], 0, e.y, v_w, e.y)
         
         def on_p(e):
             rd["x"], rd["y"] = e.x, e.y
@@ -810,9 +815,9 @@ class MainApp:
                 h = abs(dx) / target_ratio
                 dy = h if dy >= 0 else -h
             if is_ctrl:
-                m_dx, m_dy = min(x0, self.sw - x0), min(y0, self.sh - y0)
+                m_dx, m_dy = min(x0, v_w - x0), min(y0, v_h - y0)
             else:
-                m_dx, m_dy = self.sw - x0 if dx > 0 else x0, self.sh - y0 if dy > 0 else y0
+                m_dx, m_dy = v_w - x0 if dx > 0 else x0, v_h - y0 if dy > 0 else y0
             a_dx, a_dy = abs(dx), abs(dy)
             if a_dx > m_dx and a_dx > 0:
                 s = m_dx / a_dx; dx *= s; dy *= s; a_dx, a_dy = abs(dx), abs(dy)
@@ -823,8 +828,8 @@ class MainApp:
         def on_m(e):
             x1, y1, x2, y2 = get_rect(e)
             cv.coords(rd["id"], x1, y1, x2, y2)
-            cv.coords(rd["vline"], e.x, 0, e.x, self.sh)
-            cv.coords(rd["hline"], 0, e.y, self.sw, e.y)
+            cv.coords(rd["vline"], e.x, 0, e.x, v_h)
+            cv.coords(rd["hline"], 0, e.y, v_w, e.y)
             w, h = int(abs(x2 - x1)), int(abs(y2 - y1))
             tx, ty = min(x1, x2), min(y1, y2) - 5
             cv.itemconfig(rd["tid"], text=f" {w} x {h} ")
@@ -835,14 +840,18 @@ class MainApp:
         def on_r(e):
             x1, y1, x2, y2 = get_rect(e)
             ov.destroy()
-            self.execute_capture(min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+            self.execute_capture(min(x1, x2) + v_x, min(y1, y2) + v_y, max(x1, x2) + v_x, max(y1, y2) + v_y)
             self.show_window()
             
         cv.bind("<Motion>", on_hover); cv.bind("<Button-1>", on_p); cv.bind("<B1-Motion>", on_m); cv.bind("<ButtonRelease-1>", on_r)
 
     def full_capture(self):
         self.root.withdraw(); self.root.update(); time.sleep(0.3)
-        self.execute_capture(0, 0, self.sw, self.sh)
+        v_x = user32.GetSystemMetrics(76)
+        v_y = user32.GetSystemMetrics(77)
+        v_w = user32.GetSystemMetrics(78)
+        v_h = user32.GetSystemMetrics(79)
+        self.execute_capture(v_x, v_y, v_x + v_w, v_y + v_h)
         self.show_window()
 
     def on_thumbnail_dblclick(self, filepath):
